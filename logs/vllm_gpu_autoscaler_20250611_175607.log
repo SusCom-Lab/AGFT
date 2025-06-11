@@ -1,0 +1,23 @@
+2025-06-11 17:56:07,700 [[32mINFO[0m] __main__: 🚀 vLLM GPU自适应调频系统 (Hybrid LinUCB)
+2025-06-11 17:56:07,700 [[32mINFO[0m] __main__: 📅 启动时间: 2025-06-11 17:56:07
+2025-06-11 17:56:07,735 [[32mINFO[0m] __main__: 📝 配置文件: config/config.yaml
+2025-06-11 17:56:07,735 [[32mINFO[0m] __main__: 🤖 模型选项: 重置
+2025-06-11 17:56:07,736 [[32mINFO[0m] __main__: ============================================================
+2025-06-11 17:56:07,736 [[32mINFO[0m] __main__: 🚀 vLLM GPU自适应调频系统 v2.0 (Hybrid LinUCB)
+2025-06-11 17:56:07,736 [[32mINFO[0m] __main__: ============================================================
+2025-06-11 17:56:07,740 [[32mINFO[0m] __main__: 🔧 初始化系统组件...
+2025-06-11 17:56:07,904 [[35mCRITICAL[0m] __main__: 💥 致命错误: 'GPUController' object has no attribute 'config'
+Traceback (most recent call last):
+  File "/home/ldaphome/colin/workplace/vllm_mab/src/main.py", line 518, in main
+    autoscaler = VLLMGPUAutoscaler(
+                 ^^^^^^^^^^^^^^^^^^
+  File "/home/ldaphome/colin/workplace/vllm_mab/src/main.py", line 43, in __init__
+    self.gpu_controller = GPUController(
+                          ^^^^^^^^^^^^^^
+  File "/home/ldaphome/colin/workplace/vllm_mab/src/gpu_controller.py", line 50, in __init__
+    self.frequencies = self._generate_frequency_list()
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ldaphome/colin/workplace/vllm_mab/src/gpu_controller.py", line 209, in _generate_frequency_list
+    if self.config.get("force_step_list", False):
+       ^^^^^^^^^^^
+AttributeError: 'GPUController' object has no attribute 'config'

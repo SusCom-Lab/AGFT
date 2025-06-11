@@ -1,0 +1,83 @@
+2025-06-11 14:49:30,059 [[32mINFO[0m] __main__: 🚀 vLLM GPU自适应调频系统
+2025-06-11 14:49:30,059 [[32mINFO[0m] __main__: 📅 启动时间: 2025-06-11 14:49:30
+2025-06-11 14:49:30,081 [[32mINFO[0m] __main__: 📝 配置文件: config/config.yaml
+2025-06-11 14:49:30,081 [[32mINFO[0m] __main__: 🤖 模型选项: 重置
+2025-06-11 14:49:30,082 [[32mINFO[0m] __main__: ============================================================
+2025-06-11 14:49:30,082 [[32mINFO[0m] __main__: 🚀 vLLM GPU自适应调频系统 v1.0
+2025-06-11 14:49:30,082 [[32mINFO[0m] __main__: ============================================================
+2025-06-11 14:49:30,085 [[32mINFO[0m] __main__: 🔧 初始化系统组件...
+2025-06-11 14:49:30,242 [[32mINFO[0m] __main__: 🔄 重置模型，从头开始学习
+2025-06-11 14:49:30,243 [[32mINFO[0m] __main__: ✅ 系统初始化完成
+2025-06-11 14:49:30,244 [[32mINFO[0m] __main__: 📋 配置摘要:
+2025-06-11 14:49:30,244 [[32mINFO[0m] __main__:    - GPU设备: 0
+2025-06-11 14:49:30,244 [[32mINFO[0m] __main__:    - 频率范围: 1005-2100MHz
+2025-06-11 14:49:30,244 [[32mINFO[0m] __main__:    - 频率档位: 14个
+2025-06-11 14:49:30,244 [[32mINFO[0m] __main__:    - 决策间隔: 0.5秒
+2025-06-11 14:49:30,245 [[32mINFO[0m] __main__:    - TTFT限制: 300.0秒
+2025-06-11 14:49:30,245 [[32mINFO[0m] __main__:    - TPOT限制: 5秒
+2025-06-11 14:49:30,245 [[32mINFO[0m] __main__:    - 初始探索率: 3.0
+2025-06-11 14:49:30,245 [[32mINFO[0m] __main__: 
+============================================================
+2025-06-11 14:49:30,245 [[32mINFO[0m] __main__: 🎮 开始自适应GPU调频控制
+2025-06-11 14:49:30,246 [[32mINFO[0m] __main__: ============================================================
+
+2025-06-11 14:49:30,246 [[32mINFO[0m] __main__: 
+──────────────────── 迭代 1 ────────────────────
+2025-06-11 14:49:30,246 [[32mINFO[0m] __main__: 📊 [阶段1/5] 采集系统状态...
+2025-06-11 14:49:32,262 [[32mINFO[0m] __main__: 🔍 [阶段2/5] 提取特征...
+2025-06-11 14:49:32,262 [[31mERROR[0m] __main__: ❌ 迭代错误 (1): FeatureExtractor.extract() missing 2 required positional arguments: 'action_index' and 'n_actions'
+Traceback (most recent call last):
+  File "/home/ldaphome/colin/workplace/vllm_mab/src/main.py", line 240, in run
+    raw_features = self.feature_extractor.extract(gauge_metrics, counter_deltas)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: FeatureExtractor.extract() missing 2 required positional arguments: 'action_index' and 'n_actions'
+2025-06-11 14:49:32,264 [[32mINFO[0m] __main__: 等待0.5秒后重试...
+2025-06-11 14:49:32,764 [[33mWARNING[0m] __main__: ⚠️ 循环耗时过长: 2.5秒
+2025-06-11 14:49:32,764 [[32mINFO[0m] __main__: 
+──────────────────── 迭代 2 ────────────────────
+2025-06-11 14:49:32,764 [[32mINFO[0m] __main__: 📊 [阶段1/5] 采集系统状态...
+2025-06-11 14:49:34,776 [[32mINFO[0m] __main__: 🔍 [阶段2/5] 提取特征...
+2025-06-11 14:49:34,777 [[31mERROR[0m] __main__: ❌ 迭代错误 (2): FeatureExtractor.extract() missing 2 required positional arguments: 'action_index' and 'n_actions'
+Traceback (most recent call last):
+  File "/home/ldaphome/colin/workplace/vllm_mab/src/main.py", line 240, in run
+    raw_features = self.feature_extractor.extract(gauge_metrics, counter_deltas)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: FeatureExtractor.extract() missing 2 required positional arguments: 'action_index' and 'n_actions'
+2025-06-11 14:49:34,779 [[32mINFO[0m] __main__: 等待0.5秒后重试...
+2025-06-11 14:49:35,279 [[33mWARNING[0m] __main__: ⚠️ 循环耗时过长: 2.5秒
+2025-06-11 14:49:35,279 [[32mINFO[0m] __main__: 
+──────────────────── 迭代 3 ────────────────────
+2025-06-11 14:49:35,281 [[32mINFO[0m] __main__: 📊 [阶段1/5] 采集系统状态...
+2025-06-11 14:49:37,288 [[32mINFO[0m] __main__: 🔍 [阶段2/5] 提取特征...
+2025-06-11 14:49:37,288 [[31mERROR[0m] __main__: ❌ 迭代错误 (3): FeatureExtractor.extract() missing 2 required positional arguments: 'action_index' and 'n_actions'
+Traceback (most recent call last):
+  File "/home/ldaphome/colin/workplace/vllm_mab/src/main.py", line 240, in run
+    raw_features = self.feature_extractor.extract(gauge_metrics, counter_deltas)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: FeatureExtractor.extract() missing 2 required positional arguments: 'action_index' and 'n_actions'
+2025-06-11 14:49:37,290 [[32mINFO[0m] __main__: 等待0.5秒后重试...
+2025-06-11 14:49:37,790 [[33mWARNING[0m] __main__: ⚠️ 循环耗时过长: 2.5秒
+2025-06-11 14:49:37,791 [[32mINFO[0m] __main__: 
+──────────────────── 迭代 4 ────────────────────
+2025-06-11 14:49:37,791 [[32mINFO[0m] __main__: 📊 [阶段1/5] 采集系统状态...
+2025-06-11 14:49:39,815 [[32mINFO[0m] __main__: 🔍 [阶段2/5] 提取特征...
+2025-06-11 14:49:39,815 [[31mERROR[0m] __main__: ❌ 迭代错误 (4): FeatureExtractor.extract() missing 2 required positional arguments: 'action_index' and 'n_actions'
+Traceback (most recent call last):
+  File "/home/ldaphome/colin/workplace/vllm_mab/src/main.py", line 240, in run
+    raw_features = self.feature_extractor.extract(gauge_metrics, counter_deltas)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: FeatureExtractor.extract() missing 2 required positional arguments: 'action_index' and 'n_actions'
+2025-06-11 14:49:39,817 [[32mINFO[0m] __main__: 等待0.5秒后重试...
+2025-06-11 14:49:40,318 [[33mWARNING[0m] __main__: ⚠️ 循环耗时过长: 2.5秒
+2025-06-11 14:49:40,318 [[32mINFO[0m] __main__: 
+──────────────────── 迭代 5 ────────────────────
+2025-06-11 14:49:40,318 [[32mINFO[0m] __main__: 📊 [阶段1/5] 采集系统状态...
+2025-06-11 14:49:42,325 [[32mINFO[0m] __main__: 🔍 [阶段2/5] 提取特征...
+2025-06-11 14:49:42,325 [[31mERROR[0m] __main__: ❌ 迭代错误 (5): FeatureExtractor.extract() missing 2 required positional arguments: 'action_index' and 'n_actions'
+Traceback (most recent call last):
+  File "/home/ldaphome/colin/workplace/vllm_mab/src/main.py", line 240, in run
+    raw_features = self.feature_extractor.extract(gauge_metrics, counter_deltas)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: FeatureExtractor.extract() missing 2 required positional arguments: 'action_index' and 'n_actions'
+2025-06-11 14:49:42,327 [[35mCRITICAL[0m] __main__: 连续错误过多，系统退出
+2025-06-11 14:49:42,327 [[33mWARNING[0m] __main__: ⚠️ 循环耗时过长: 2.0秒

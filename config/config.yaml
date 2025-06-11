@@ -1,0 +1,43 @@
+# vLLM服务配置
+vllm:
+  prometheus_url: "http://localhost:8001/metrics"
+  
+# GPU配置
+gpu:
+  device_id: 0
+  min_frequency: 1005  # MHz
+  frequency_step: 90   # MHz
+  idle_frequency: 210  # 空闲时频率
+  force_step_list: true
+  
+# 控制参数
+control:
+  decision_interval: 0.4  # 秒
+  ttft_limit: 300.0        # 秒
+  tpot_limit: 5       # 秒
+  switch_cost_weight: 0.1  # 频率切换成本权重
+  
+# LinUCB参数
+linucb:
+  initial_alpha: 3.0     # 初始探索率
+  alpha_decay_rate: 0.01 # 探索率衰减
+  min_alpha: 0.5         # 最小探索率
+  lambda_reg: 0.1
+  
+# 日志配置
+logging:
+  level: INFO
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+
+# 添加模型配置
+model:
+  save_dir: "data/models"
+  save_interval: 10  # 每10轮保存一次
+  keep_last_n: 5     # 保留最近5个模型文件
+
+metrics:
+  gauge_interval: 0.1      # s
+  energy_ignore_first: 1   # 次
+
+

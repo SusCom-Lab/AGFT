@@ -1,0 +1,18 @@
+2025-06-11 19:44:43,842 [[32mINFO[0m] __main__: 🚀 vLLM GPU自适应调频系统 (Hybrid LinUCB)
+2025-06-11 19:44:43,842 [[32mINFO[0m] __main__: 📅 启动时间: 2025-06-11 19:44:43
+2025-06-11 19:44:43,842 [[32mINFO[0m] __main__: 📝 配置文件: config/config.yaml
+2025-06-11 19:44:43,862 [[32mINFO[0m] __main__: 🤖 模型选项: 自动
+2025-06-11 19:44:43,863 [[32mINFO[0m] __main__: ============================================================
+2025-06-11 19:44:43,864 [[32mINFO[0m] __main__: 🚀 vLLM GPU自适应调频系统 v2.0 (Hybrid LinUCB)
+2025-06-11 19:44:43,864 [[32mINFO[0m] __main__: ============================================================
+2025-06-11 19:44:43,867 [[32mINFO[0m] __main__: 🔧 初始化系统组件...
+2025-06-11 19:44:45,087 [[33mWARNING[0m] __main__: 🚫 仅推断模式开启：LinUCB 将不会更新！
+2025-06-11 19:44:45,087 [[35mCRITICAL[0m] __main__: 💥 致命错误: 'VLLMGPUAutoscaler' object has no attribute 'linucb'
+Traceback (most recent call last):
+  File "/home/ldaphome/colin/workplace/vllm_mab/src/main.py", line 536, in main
+    autoscaler = VLLMGPUAutoscaler(
+                 ^^^^^^^^^^^^^^^^^^
+  File "/home/ldaphome/colin/workplace/vllm_mab/src/main.py", line 59, in __init__
+    self.linucb.alpha = 0.0
+    ^^^^^^^^^^^
+AttributeError: 'VLLMGPUAutoscaler' object has no attribute 'linucb'
