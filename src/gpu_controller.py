@@ -40,7 +40,7 @@ class GPUController:
                  adaptive_update_interval: int = 20, enable_memory_frequency_control: bool = False,
                  memory_auto_detect: bool = True, memory_frequencies: List[int] = None,
                  reward_threshold: float = 0.5, learner_maturity_threshold: int = 100,
-                 refinement_start_threshold: int = 50):
+                 refinement_start_threshold: int = 50, actual_frequency_callback=None):
         self.gpu_id = gpu_id
         self.step = step
         self.auto_step = auto_step
@@ -49,6 +49,9 @@ class GPUController:
         self.reward_threshold = reward_threshold
         self.learner_maturity_threshold = learner_maturity_threshold
         self.refinement_start_threshold = refinement_start_threshold
+        
+        # 动作空间自适应恢复回调函数
+        self.actual_frequency_callback = actual_frequency_callback
         
         # 显存频率控制参数
         self.enable_memory_frequency_control = enable_memory_frequency_control
@@ -126,9 +129,9 @@ class GPUController:
         logger.info(f"📍 当前频率: {self.current_freq}MHz (索引: {self.current_idx})")
         
         # 初始能耗和时间戳
-        self.last_energy_mj = self._get_total_energy_consumption()
+        self.last_energy_j = self._get_total_energy_consumption()
         self.last_energy_timestamp = time.time()
-        logger.info(f"⚡ 初始能耗读数: {self.last_energy_mj:.1f}mJ")
+        logger.info(f"⚡ 初始能耗读数: {self.last_energy_j:.3f}J")
     
     def _get_gpu_info(self):
         """获取GPU详细信息"""
@@ -584,12 +587,16 @@ class GPUController:
             
             if success:
                 # 等待一下让设置生效
-                time.sleep(0.1)
+                time.sleep(1)
                 
                 # 验证实际频率
                 actual_freq = self._get_current_frequency()
                 self.current_freq = actual_freq
-                self.current_idx = self._freq_to_idx(actual_freq)
+                # 只有当频率列表不为空时才更新索引
+                if self.frequencies:
+                    self.current_idx = self._freq_to_idx(actual_freq)
+                else:
+                    self.current_idx = -1  # 重置模式
                 
                 tolerance = 5  # MHz
                 # 检查实际频率与我们试图设置的频率的偏差
@@ -603,6 +610,14 @@ class GPUController:
                     with self._failed_frequencies_lock:
                         self.failed_frequencies.add(closest_freq)
                     logger.info(f"🚫 已将频率 {closest_freq}MHz 标记为失败，将从动作空间移除")
+                    
+                    # 通知主控制器添加实际频率到动作空间
+                    if self.actual_frequency_callback and actual_freq != closest_freq:
+                        try:
+                            logger.info(f"🔄 通知主控制器将实际频率 {actual_freq}MHz 添加到动作空间")
+                            self.actual_frequency_callback(actual_freq)
+                        except Exception as e:
+                            logger.error(f"❌ 调用实际频率回调函数失败: {e}")
                     
                     # 回滚 internal state，告诉调用方失败
                     self._get_current_frequency()  # 再刷一次确保 current_freq 正确
@@ -683,7 +698,7 @@ class GPUController:
             
             if success:
                 # 等待设置生效
-                time.sleep(0.2)
+                time.sleep(0.7)
                 
                 # 验证实际显存频率
                 actual_mem_freq = self._get_current_memory_frequency()
@@ -792,6 +807,9 @@ class GPUController:
         """将频率对转换为动作索引"""
         # 找到最接近的核心频率索引
         core_idx = self._freq_to_idx(core_freq)
+        # 如果处于重置模式（频率列表为空），返回-1
+        if core_idx == -1:
+            return -1
         
         if not self.enable_memory_frequency_control or not self.memory_frequency_supported or memory_freq is None:
             return core_idx
@@ -843,7 +861,12 @@ class GPUController:
         if success:
             logger.info("✅ GPU时钟已重置")
             self.current_freq = self._get_current_frequency()
-            self.current_idx = self._freq_to_idx(self.current_freq)
+            # 只有当频率列表不为空时才更新索引
+            if self.frequencies:
+                self.current_idx = self._freq_to_idx(self.current_freq)
+            else:
+                self.current_idx = -1  # 表示重置模式，无对应索引
+                logger.debug(f"📊 重置模式：频率{self.current_freq}MHz，无对应索引")
             
             # 更新显存频率状态
             if self.enable_memory_frequency_control and self.memory_frequency_supported:
@@ -856,22 +879,22 @@ class GPUController:
     def _freq_to_idx(self, freq: int) -> int:
         """频率转索引"""
         if not self.frequencies:
-            logger.error(f"❌ 频率列表为空，无法转换频率 {freq}MHz 到索引")
-            return 0  # 返回默认索引
+            logger.debug(f"📊 频率列表为空，频率 {freq}MHz 无对应索引（重置模式）")
+            return -1  # 返回-1表示重置模式
         distances = [abs(f - freq) for f in self.frequencies]
         return np.argmin(distances)
     
-    def read_energy_mj(self) -> float:
+    def read_energy_j(self) -> float:
         """读取当前累计能耗 - 线程安全版本"""
         with self._lock:
             return self._get_total_energy_consumption()
     
     
     def _get_total_energy_consumption(self) -> float:
-        """获取GPU累计能耗（毫焦）"""
+        """获取GPU累计能耗（焦耳）"""
         try:
             energy_mj = pynvml.nvmlDeviceGetTotalEnergyConsumption(self.nvml_handle)
-            return float(energy_mj)
+            return float(energy_mj) / 1000.0  # 转换毫焦为焦耳
         except Exception as e:
             # 某些GPU不支持能耗读取，使用功率估算
             logger.debug(f"无法读取累计能耗: {e}")
@@ -880,15 +903,15 @@ class GPUController:
                 current_time = time.time()
                 if hasattr(self, 'last_energy_timestamp'):
                     time_delta = current_time - self.last_energy_timestamp
-                    energy_delta = power * time_delta * 1000  # W * s * 1000 = mJ
-                    if hasattr(self, 'last_energy_mj'):
-                        return self.last_energy_mj + energy_delta
+                    energy_delta = power * time_delta  # W * s = J
+                    if hasattr(self, 'last_energy_j'):
+                        return self.last_energy_j + energy_delta
                     else:
                         return energy_delta
                 else:
-                    return power * 1000  # 默认1W * 1s
+                    return power  # 默认1W * 1s = 1J
             except:
-                return 100000  # 默认100W * 1s
+                return 100  # 默认100W * 1s = 100J
     
     def _get_current_power(self) -> float:
         """获取当前功率（瓦特）"""

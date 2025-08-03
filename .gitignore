@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Project documentation and instructions
+CLAUDE.md
+ARCHITECTURE_DIAGRAMS_SUMMARY.md
+
+# Logs and data
+logs/
+data/
+*.jsonl
+*.txt
+
+# Analysis and research files
+analysis*.py
+*analysis*.py
+create_*_diagram*.py
+*_diagram*.py
+expand_*.py
+extend_*.py
+feature_validation*.py
+test_*.py
+normal*.py
+tpot_*.py
+run_*.py
+simple_*.py
+
+# Experiments and visualizations
+experiment/
+visualization/
+normal_mab_visualizations/
+*.png
+
+# IDE / OS specific
+.vscode/
+.DS_Store

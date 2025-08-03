@@ -578,6 +578,36 @@ class ContextualLinUCB:
         self.available_frequencies = filtered_frequencies.copy()
         logger.debug(f"🔄 频率空间状态: 可用{len(filtered_frequencies)}个, 已修剪{len(self.pruned_frequencies)}个")
     
+    def add_actual_frequency(self, actual_freq: int):
+        """
+        动态添加实际使用的频率到动作空间
+        当目标频率设置失败时，添加实际采用的频率以扩展动作空间
+        
+        Args:
+            actual_freq: 实际设置成功的频率（MHz）
+        """
+        if actual_freq in self.available_frequencies:
+            logger.debug(f"🔄 频率 {actual_freq}MHz 已存在于动作空间中")
+            return
+        
+        if actual_freq in self.disabled_core_frequencies:
+            logger.warning(f"⚠️ 频率 {actual_freq}MHz 已被禁用，不能添加到动作空间")
+            return
+        
+        if actual_freq in self.pruned_frequencies:
+            logger.warning(f"⚠️ 频率 {actual_freq}MHz 已被修剪，不能添加到动作空间")
+            return
+        
+        # 添加到可用频率列表
+        self.available_frequencies.append(actual_freq)
+        self.available_frequencies.sort()  # 保持排序
+        
+        # 初始化新频率的模型
+        self._init_arm_model(actual_freq)
+        
+        logger.info(f"✅ 动态添加实际频率 {actual_freq}MHz 到动作空间 (总计{len(self.available_frequencies)}个频率)")
+        logger.debug(f"🔄 更新后的动作空间: {sorted(self.available_frequencies)}")
+    
     def select_action(self, context: np.ndarray, available_frequencies: List[int]):
         """
         使用LinUCB算法选择最优动作 - 支持核心频率或组合频率优化
@@ -925,6 +955,9 @@ class ContextualLinUCB:
         with open(filepath, 'wb') as f:
             pickle.dump(model_data, f)
         
+        # 清理旧模型文件，只保留1个最新的
+        self._cleanup_old_models(current_file=filepath.name)
+        
         # 创建最新模型链接
         latest_path = self.model_dir / "latest_contextual_model.pkl"
         if latest_path.exists() or latest_path.is_symlink():
@@ -932,6 +965,35 @@ class ContextualLinUCB:
         latest_path.symlink_to(filepath.name)
         
         logger.info(f"💾 Contextual LinUCB模型已保存: {filepath}")
+    
+    def _cleanup_old_models(self, current_file: str):
+        """清理旧模型文件，只保留1个最新的"""
+        try:
+            # 查找所有contextual_linucb_model文件
+            model_files = list(self.model_dir.glob("contextual_linucb_model_*.pkl"))
+            
+            if len(model_files) <= 1:
+                return  # 没有旧文件需要清理
+            
+            # 按修改时间排序，最新的在前
+            model_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            
+            # 删除除当前文件外的所有文件
+            deleted_count = 0
+            for model_file in model_files:
+                if model_file.name != current_file:
+                    try:
+                        model_file.unlink()
+                        deleted_count += 1
+                        logger.debug(f"🗑️ 删除旧模型文件: {model_file.name}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ 删除旧模型文件失败 {model_file.name}: {e}")
+            
+            if deleted_count > 0:
+                logger.info(f"🧹 清理完成，删除了 {deleted_count} 个旧模型文件")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ 模型文件清理失败: {e}")
     
     def load_model(self, filename: str = None):
         """加载模型"""

@@ -17,6 +17,7 @@ from .gpu_controller import GPUController
 from .feature_extractor import FeatureExtractor
 from .contextual_bandit import ContextualLinUCB
 from .reward_calculator import EDPRewardCalculator
+from .experiment_recorder import ExperimentRecorder, create_round_data_dict
 
 
 def get_gpu_model_for_logging(gpu_id: int = 0) -> str:
@@ -75,6 +76,9 @@ class VLLMGPUAutoscaler:
         # 加载配置
         self.config = self._load_config()
         
+        # 检查数据收集模式
+        self.data_collection_mode = self.config.get('control', {}).get('data_collection_mode', False)
+        
         # 设置日志
         log_file_path, gpu_model = create_gpu_classified_log_dir(config_path)
         logging_config = self.config.get('logging', {})
@@ -105,6 +109,7 @@ class VLLMGPUAutoscaler:
         self.logger.info(f"📝 日志文件: {log_file_path}")
         self.logger.info(f"📊 日志级别: 控制台={console_level_str}, 文件={file_level_str}")
         self.logger.info(f"🔍 详细轮次记录: {'启用' if logging_config.get('detailed_round_logging', True) else '禁用'}")
+        self.logger.info(f"📊 运行模式: {'数据收集模式 (不调频)' if self.data_collection_mode else '正常学习模式'}")
         self.logger.info("=" * 80)
         
         # 初始化核心组件
@@ -130,7 +135,13 @@ class VLLMGPUAutoscaler:
         # 初始化指标收集器
         prometheus_url = self.config['vllm']['prometheus_url']
         metrics_config = self.config.get('metrics', {})
-        self.metrics_collector = MetricsCollector(prometheus_url, **metrics_config)
+        # 只传递MetricsCollector需要的参数
+        metrics_collector_args = {
+            'ema_alpha': metrics_config.get('ema_alpha', 0.4),
+            'sampling_duration': metrics_config.get('sampling_duration', 0.8),
+            'sampling_interval': metrics_config.get('sampling_interval', 0.01)
+        }
+        self.metrics_collector = MetricsCollector(prometheus_url, **metrics_collector_args)
         
         # 初始化GPU控制器
         gpu_config = self.config.get('gpu', {})
@@ -162,6 +173,9 @@ class VLLMGPUAutoscaler:
         if 'reward_threshold' in adaptive_config:
             gpu_controller_args['reward_threshold'] = adaptive_config['reward_threshold']
         
+        # 添加实际频率回调函数
+        gpu_controller_args['actual_frequency_callback'] = self._on_actual_frequency_available
+        
         self.gpu_controller = GPUController(**gpu_controller_args)
         
         # 初始化特征提取器
@@ -169,11 +183,19 @@ class VLLMGPUAutoscaler:
         
         # 初始化奖励计算器
         control_config = self.config.get('control', {})
+        # 获取metrics配置用于baseline
+        metrics_config = self.config.get('metrics', {})
+        sampling_duration = metrics_config.get('sampling_duration', 0.8)
+        
         self.reward_calculator = EDPRewardCalculator(
             ttft_limit=control_config.get('ttft_limit', 2.0),
             tpot_limit=control_config.get('tpot_limit', 0.25),
-            ignore_slo=control_config.get('ignore_slo', True)
+            ignore_slo=control_config.get('ignore_slo', True),
+            sampling_duration=sampling_duration,
+            baseline_measurements=metrics_config.get('baseline_measurements', 3)
         )
+        
+        # 基线状态由reward_calculator管理
         
         # 初始化Contextual LinUCB模型 (不再支持神经网络)
         linucb_config = self.config.get('linucb', {})
@@ -241,17 +263,67 @@ class VLLMGPUAutoscaler:
         if hasattr(self.model, 'total_rounds') and self.model.total_rounds > 0:
             self.logger.info(f"   已训练轮次: {self.model.total_rounds}")
             self.logger.info(f"   已知频率: {len(self.model.available_frequencies)}个")
+        
+        # 初始化实验数据记录器
+        self.experiment_recorder = ExperimentRecorder()
+        self.experiment_recorder.save_config_snapshot(self.config_path)
+        
+        # 获取GPU型号信息并保存到实验记录器
+        gpu_model = get_gpu_model_for_logging(gpu_config.get('device_id', 0))
+        self.experiment_recorder.set_gpu_model(gpu_model)
+    
+    def _on_actual_frequency_available(self, actual_freq: int):
+        """
+        实际频率可用回调函数
+        当GPU频率设置失败但有实际频率可用时，将其添加到动作空间
+        
+        Args:
+            actual_freq: 实际设置成功的频率（MHz）
+        """
+        try:
+            # 检查配置是否启用了自适应恢复
+            control_config = self.config.get('control', {})
+            if not control_config.get('auto_add_actual_frequency', True):
+                self.logger.debug(f"🔄 自动添加实际频率功能已禁用，忽略 {actual_freq}MHz")
+                return
+            
+            # 检查是否有模型存在
+            if not hasattr(self, 'model') or self.model is None:
+                self.logger.warning(f"⚠️ 模型不存在，无法添加实际频率 {actual_freq}MHz")
+                return
+            
+            # 检查动作空间大小，只有当空间很小时才添加
+            min_action_size = control_config.get('min_action_space_size', 1)
+            current_action_count = len(self.model.available_frequencies)
+            
+            if current_action_count > min_action_size:
+                self.logger.debug(f"🔄 动作空间足够大({current_action_count}>{min_action_size})，不添加实际频率 {actual_freq}MHz")
+                return
+            
+            # 添加实际频率到模型的动作空间
+            self.model.add_actual_frequency(actual_freq)
+            
+            self.logger.info(f"🚀 动作空间自适应恢复: 成功添加实际频率 {actual_freq}MHz")
+            
+        except Exception as e:
+            self.logger.error(f"❌ 添加实际频率失败: {e}")
+            import traceback
+            self.logger.debug(f"错误详情: {traceback.format_exc()}")
     
     def _signal_handler(self, signum, _frame):
         """信号处理器"""
         self.logger.info(f"🛑 接收到信号 {signum}，开始优雅关闭...")
         self.running = False
+        
+        # 结束实验并保存数据
+        if hasattr(self, 'experiment_recorder'):
+            self.experiment_recorder.finalize_experiment()
     
     def _get_current_state(self) -> tuple[np.ndarray, list, dict]:
         """获取当前系统状态"""
         # 收集指标（包含能耗数据）
         metrics = self.metrics_collector.collect_metrics(
-            energy_reader=self.gpu_controller.read_energy_mj
+            energy_reader=self.gpu_controller.read_energy_j
         )
         if not metrics:
             raise RuntimeError("无法收集vLLM指标")
@@ -264,12 +336,24 @@ class VLLMGPUAutoscaler:
         # 获取可用频率（排除修剪和失败的频率）
         available_frequencies = self.gpu_controller.get_available_frequencies(self.model)
         if not available_frequencies:
-            raise RuntimeError("无可用GPU频率")
+            self.logger.warning("⚠️ 无可用GPU频率，重置GPU频率到默认状态")
+            # 重置GPU频率到默认状态，不再锁频
+            if self.gpu_controller.reset_gpu_clocks():
+                self.logger.info("✅ GPU频率已重置，系统继续运行（不锁频模式）")
+                # 返回一个空的频率列表，表示不进行频率决策
+                return features, [], metrics
+            else:
+                raise RuntimeError("GPU频率重置失败，无法继续运行")
         
         return features, available_frequencies, metrics
     
     def _make_decision(self, features: np.ndarray, available_frequencies: list) -> int:
         """做出频率决策"""
+        # 如果没有可用频率，返回None表示不进行频率决策
+        if not available_frequencies:
+            self.logger.debug("📊 无可用频率，跳过频率决策（保持重置状态）")
+            return None
+            
         # 更新模型的动作空间
         self.model.update_action_space(available_frequencies)
         
@@ -281,8 +365,31 @@ class VLLMGPUAutoscaler:
         
         return selected_freq
     
-    def _execute_action_and_measure(self, action) -> tuple[float, dict, Optional[float]]:
+    def _execute_action_and_measure(self, action, is_baseline: bool = False) -> tuple[float, dict, Optional[float]]:
         """执行动作并测量奖励（支持核心频率或组合频率）"""
+        # 如果action为None，表示系统处于重置状态，不设置频率
+        if action is None:
+            self.logger.debug("📊 频率已重置，跳过频率设置，直接测量性能")
+            # 等待决策间隔
+            time.sleep(0.3)
+            
+            # 收集执行后的指标
+            post_metrics = self.metrics_collector.collect_metrics(
+                energy_reader=self.gpu_controller.read_energy_j
+            )
+            if not post_metrics:
+                self.logger.warning("⚠️ post_metrics为空，跳过自适应采样器更新")
+                return 0.0, {}, None
+                
+            # 计算奖励（使用当前的实际频率）
+            current_freq = self.gpu_controller._get_current_frequency()
+            self.logger.info(f"📊 重置模式下当前GPU频率: {current_freq}MHz")
+            
+            # 获取能耗增量
+            energy_delta = post_metrics.get('energy_delta_j', 0.0)
+            reward = self.reward_calculator.calculate_reward(post_metrics, energy_delta)
+            return reward, post_metrics, None
+            
         # 设置GPU频率（组合频率或核心频率）
         if self.model.memory_optimization_enabled and isinstance(action, tuple):
             # 组合频率模式：设置核心频率和显存频率
@@ -306,14 +413,14 @@ class VLLMGPUAutoscaler:
         
         # 收集执行后的指标（包含能耗数据）
         post_metrics = self.metrics_collector.collect_metrics(
-            energy_reader=self.gpu_controller.read_energy_mj
+            energy_reader=self.gpu_controller.read_energy_j
         )
         if not post_metrics:
             self.logger.warning("⚠️ 无法收集执行后指标")
             return -0.5, {}, None
         
-        # 从指标中获取能耗增量
-        energy_delta = post_metrics.get('energy_delta_mj', 0.0)
+        # 从指标中获取能耗增量（焦耳）
+        energy_delta = post_metrics.get('energy_delta_j', 0.0)
         
         # 计算奖励和EDP值
         # 从vLLM指标中提取计数器增量
@@ -330,13 +437,52 @@ class VLLMGPUAutoscaler:
         # 调用calculate方法获取详细信息
         reward, info = self.reward_calculator.calculate(
             counter_deltas=counter_deltas,
-            energy_consumed_mj=energy_delta
+            energy_consumed_j=energy_delta,
+            is_baseline_collection=is_baseline
         )
         
         # 提取EDP值
-        edp_value = info.get('edp', None)
+        edp_value = info.get('edp_raw', None)
         
         return reward, post_metrics, edp_value
+    
+    def _collect_baseline_metrics(self) -> tuple[float, dict, Optional[float]]:
+        """专门用于基线收集的指标收集方法 - 不改变GPU频率，但检查任务状态"""
+        try:
+            # 等待系统稳定
+            time.sleep(0.3)
+            
+            # 收集指标（包含能耗数据）
+            post_metrics = self.metrics_collector.collect_metrics(
+                energy_reader=self.gpu_controller.read_energy_j
+            )
+            if not post_metrics:
+                self.logger.warning("⚠️ 基线收集时无法收集指标")
+                return 0.0, {}, None
+            
+            # 基线收集期间检查任务状态 - 如果没有任务，跳过这次收集
+            running_requests = post_metrics.get('vllm:num_requests_running', 0)
+            has_queue = post_metrics.get('vllm:num_requests_waiting', 0) > 0
+            
+            if running_requests == 0 and not has_queue:
+                self.logger.info("⏸️ 基线收集期间检测到无任务，跳过此次收集")
+                return 0.0, {}, None
+            
+            # 计算奖励（基线收集模式）
+            reward, info = self.reward_calculator.calculate(
+                counter_deltas=post_metrics,
+                energy_consumed_j=post_metrics.get('energy_delta_j', 0.0),
+                is_baseline_collection=True
+            )
+            
+            # 提取EDP值用于记录
+            edp_value = info.get('edp_raw', None)
+            
+            return reward, post_metrics, edp_value
+            
+        except Exception as e:
+            self.logger.error(f"❌ 基线指标收集失败: {e}")
+            return 0.0, {}, None
     
     def _check_convergence(self) -> bool:
         """检查模型是否收敛 - 基于前几个最优动作的联合稳定性"""
@@ -464,6 +610,63 @@ class VLLMGPUAutoscaler:
             else:
                 self.logger.warning(f"⚠️ 休息模式：GPU频率重置失败")
     
+    def _handle_data_collection_mode(self, features: np.ndarray, pre_metrics: dict, post_metrics: dict):
+        """处理数据收集模式：仅收集数据不调频，但收集完整的能量和EDP数据"""
+        # 获取当前GPU频率
+        current_freq = self.gpu_controller.current_freq
+        
+        # 记录数据收集轮次
+        data_round = getattr(self, '_data_collection_round', 0) + 1
+        setattr(self, '_data_collection_round', data_round)
+        
+        self.logger.info(f"📊 数据收集模式 - 轮次 {data_round}: GPU频率 {current_freq}MHz (无调频)")
+        
+        # 计算EDP数据（与学习模式相同的计算方式）
+        edp_value = 0.0
+        energy_j = 0.0
+        
+        try:
+            # 计算能量消耗（直接使用焦耳）
+            energy_j = post_metrics.get('energy_delta_j', 0.0) or 0.0
+            
+            # 计算延迟指标
+            ttft_avg = 0.0
+            tpot_avg = 0.0
+            
+            if post_metrics.get('vllm:time_to_first_token_seconds_count_delta', 0) > 0:
+                ttft_avg = (post_metrics.get('vllm:time_to_first_token_seconds_sum_delta', 0.0) / 
+                           post_metrics.get('vllm:time_to_first_token_seconds_count_delta', 1))
+            
+            if post_metrics.get('vllm:time_per_output_token_seconds_count_delta', 0) > 0:
+                tpot_avg = (post_metrics.get('vllm:time_per_output_token_seconds_sum_delta', 0.0) / 
+                           post_metrics.get('vllm:time_per_output_token_seconds_count_delta', 1))
+            
+            # 计算EDP (Energy-Delay Product)
+            if energy_j > 0 and (ttft_avg > 0 or tpot_avg > 0):
+                total_latency = ttft_avg + tpot_avg
+                edp_value = energy_j * total_latency
+                
+        except Exception as e:
+            self.logger.warning(f"⚠️ 数据收集模式计算EDP失败: {e}")
+        
+        # 记录完整数据到实验文件
+        if hasattr(self, 'experiment_recorder'):
+            try:
+                # 使用与学习模式相同的数据记录方式
+                self._record_experiment_data(
+                    round_num=data_round,
+                    features=features,
+                    selected_action=current_freq,
+                    reward=0.0,  # 数据收集模式无奖励
+                    edp_value=edp_value,
+                    pre_metrics=pre_metrics,
+                    post_metrics=post_metrics
+                )
+            except Exception as e:
+                self.logger.error(f"❌ 数据收集模式记录实验数据失败: {e}")
+        
+        print(f"📊 数据收集轮次: {data_round} (频率: {current_freq}MHz, EDP: {edp_value:.6f}J·s, 能量: {energy_j:.6f}J)")
+    
     def _log_round_details(self, round_num: int, features: np.ndarray, action, 
                           reward: float, edp_value: Optional[float], 
                           _pre_metrics: dict, post_metrics: dict):
@@ -475,7 +678,7 @@ class VLLMGPUAutoscaler:
             return
         
         # 提取关键指标
-        energy_delta = post_metrics.get('energy_delta_mj', 0.0)
+        energy_delta = post_metrics.get('energy_delta_j', 0.0)
         
         # vLLM指标
         ttft_count = post_metrics.get('vllm:time_to_first_token_seconds_count_delta', 0)
@@ -570,8 +773,8 @@ class VLLMGPUAutoscaler:
                 'avg_tpot': avg_tpot,
                 'ttft_count': ttft_count,
                 'tpot_count': tpot_count,
-                'energy_delta_mj': energy_delta,
-                'energy_delta_j': energy_delta / 1000,
+                'energy_delta_j': energy_delta,
+                'energy_delta_mj': energy_delta * 1000,
                 'edp_value': edp_value
             },
             'reward': {
@@ -594,6 +797,169 @@ class VLLMGPUAutoscaler:
         
         # 记录JSON格式数据
         self.logger.info(f"📋 JSON数据: {json.dumps(round_data, ensure_ascii=False)}")
+    
+    def _record_experiment_data(self, round_num: int, features: np.ndarray, selected_action, 
+                              reward: float, edp_value: float, pre_metrics: dict, post_metrics: dict):
+        """记录实验数据到文件"""
+        try:
+            # 获取必要的数据
+            feature_names = self.feature_extractor.feature_names
+            
+            # 处理动作信息（支持组合频率）
+            if isinstance(selected_action, tuple):
+                gpu_frequency = selected_action[0]  # 只记录核心频率
+            else:
+                gpu_frequency = selected_action
+            
+            # 计算延迟指标（使用delta版本）
+            ttft_sum_key = 'vllm:time_to_first_token_seconds_sum_delta'
+            ttft_count_key = 'vllm:time_to_first_token_seconds_count_delta'
+            tpot_sum_key = 'vllm:time_per_output_token_seconds_sum_delta'
+            tpot_count_key = 'vllm:time_per_output_token_seconds_count_delta'
+            e2e_sum_key = 'vllm:e2e_request_latency_seconds_sum_delta'
+            e2e_count_key = 'vllm:e2e_request_latency_seconds_count_delta'
+            
+            # 计算平均延迟
+            ttft_avg = 0.0
+            tpot_avg = 0.0
+            e2e_avg = 0.0
+            
+            if (ttft_sum_key in post_metrics and ttft_count_key in post_metrics and 
+                post_metrics[ttft_count_key] and post_metrics[ttft_count_key] > 0):
+                ttft_avg = post_metrics[ttft_sum_key] / post_metrics[ttft_count_key]
+            
+            if (tpot_sum_key in post_metrics and tpot_count_key in post_metrics and 
+                post_metrics[tpot_count_key] and post_metrics[tpot_count_key] > 0):
+                tpot_avg = post_metrics[tpot_sum_key] / post_metrics[tpot_count_key]
+                
+            if (e2e_sum_key in post_metrics and e2e_count_key in post_metrics and 
+                post_metrics[e2e_count_key] and post_metrics[e2e_count_key] > 0):
+                e2e_avg = post_metrics[e2e_sum_key] / post_metrics[e2e_count_key]
+            
+            # 计算吞吐量（使用delta版本或计算差值）
+            # 优先使用delta版本，确保不是None
+            prompt_delta = post_metrics.get('vllm:prompt_tokens_total_delta', 0) or 0
+            generation_delta = post_metrics.get('vllm:generation_tokens_total_delta', 0) or 0
+            
+            # 如果没有delta版本，手动计算
+            if prompt_delta == 0 and generation_delta == 0:
+                prompt_tokens_current = post_metrics.get('vllm:prompt_tokens_total', 0) or 0
+                generation_tokens_current = post_metrics.get('vllm:generation_tokens_total', 0) or 0
+                prompt_tokens_previous = pre_metrics.get('vllm:prompt_tokens_total', 0) or 0
+                generation_tokens_previous = pre_metrics.get('vllm:generation_tokens_total', 0) or 0
+                
+                prompt_delta = prompt_tokens_current - prompt_tokens_previous
+                generation_delta = generation_tokens_current - generation_tokens_previous
+            
+            # 计算采样期间的时间差（使用配置的采样窗口）
+            metrics_config = self.config.get('metrics', {})
+            sampling_duration = metrics_config.get('sampling_duration', 1.5) or 1.5  # 确保不是None
+            
+            total_delta = prompt_delta + generation_delta
+            
+            prefill_throughput = prompt_delta / sampling_duration if sampling_duration and sampling_duration > 0 else 0
+            decode_throughput = generation_delta / sampling_duration if sampling_duration and sampling_duration > 0 else 0
+            total_throughput = total_delta / sampling_duration if sampling_duration and sampling_duration > 0 else 0
+            
+            # 获取能耗（已经是焦耳）
+            energy_j = post_metrics.get('energy_delta_j', 0.0) or 0.0
+            
+            # 计算EDP信息
+            edp_raw = energy_j * tpot_avg if tpot_avg and tpot_avg > 0 else 0  # 使用TPOT而不是E2E
+            edp_normalized = reward  # reward就是归一化的EDP
+            edp_baseline = getattr(self.reward_calculator, 'baseline_edp', 0) or 0
+            
+            # 获取系统状态（确保None安全）
+            running_requests = post_metrics.get('vllm:num_requests_running', 0) or 0
+            waiting_requests = post_metrics.get('vllm:num_requests_waiting', 0) or 0
+            active_requests = running_requests + waiting_requests
+            cache_usage = (post_metrics.get('vllm:gpu_cache_usage_perc', 0) or 0) * 100  # 转换为百分比
+            
+            current_success = post_metrics.get('vllm:request_success_total', 0) or 0
+            previous_success = pre_metrics.get('vllm:request_success_total', 0) or 0
+            completed_requests = current_success - previous_success
+            
+            # 获取学习算法状态
+            if self.data_collection_mode:
+                learning_phase = 'DATA_COLLECTION'
+                alpha_value = 0.0
+            else:
+                learning_phase = 'EXPLOITATION' if self.model.exploitation_mode else 'EXPLORATION'
+                alpha_value = getattr(self.model, 'alpha', 0)
+            
+            # 获取UCB置信度（如果有的话）
+            ucb_confidence = 0.0
+            if not self.data_collection_mode and hasattr(self.model, '_last_ucb_values') and self.model._last_ucb_values:
+                action_key = selected_action if not isinstance(selected_action, tuple) else selected_action[0]
+                ucb_confidence = self.model._last_ucb_values.get(action_key, 0.0)
+            
+            # 获取动作选择方法
+            if self.data_collection_mode:
+                action_method = 'DATA_COLLECTION'
+            else:
+                action_method = 'GREEDY' if self.model.exploitation_mode else 'UCB'
+            
+            # 获取频率管理信息
+            if self.data_collection_mode:
+                available_freqs = 0
+                pruned_freqs = 0
+            else:
+                available_freqs = len(getattr(self.model, 'available_frequencies', []))
+                pruned_freqs = len(getattr(self.model, 'pruned_frequencies', set()))
+            
+            # 获取当前频率的探索次数
+            freq_exploration_count = 0
+            if not self.data_collection_mode and hasattr(self.model, 'action_counts'):
+                freq_exploration_count = self.model.action_counts.get(selected_action, 0)
+            
+            # 检查SLO违规
+            control_config = self.config.get('control', {})
+            ttft_limit = control_config.get('ttft_limit', 2.0)
+            tpot_limit = control_config.get('tpot_limit', 0.3)
+            slo_violation = ttft_avg > ttft_limit or tpot_avg > tpot_limit
+            
+            # 构建特征字典
+            features_dict = {}
+            for i, name in enumerate(feature_names):
+                if i < len(features):
+                    features_dict[name] = float(features[i])
+            
+            # 创建轮次数据
+            round_data = create_round_data_dict(
+                round_num=round_num,
+                gpu_frequency=gpu_frequency,
+                energy_j=energy_j,
+                ttft=ttft_avg,
+                tpot=tpot_avg,
+                e2e=e2e_avg,
+                total_throughput=total_throughput,
+                prefill_throughput=prefill_throughput,
+                decode_throughput=decode_throughput,
+                edp_raw=edp_raw,
+                edp_normalized=edp_normalized,
+                edp_baseline=edp_baseline,
+                active_requests=int(active_requests),
+                cache_usage=cache_usage,
+                completed_requests=int(completed_requests),
+                learning_phase=learning_phase,
+                reward=reward,
+                alpha=alpha_value,
+                ucb_confidence=ucb_confidence,
+                action_method=action_method,
+                available_freqs=available_freqs,
+                pruned_freqs=pruned_freqs,
+                freq_exploration_count=freq_exploration_count,
+                slo_violation=slo_violation,
+                ttft_limit=ttft_limit,
+                tpot_limit=tpot_limit,
+                features=features_dict
+            )
+            
+            # 记录到文件
+            self.experiment_recorder.record_round_data(round_data)
+            
+        except Exception as e:
+            self.logger.error(f"❌ 记录实验数据失败: {e}")
     
     def _update_adaptive_sampler(self, action, reward: float, post_metrics: dict):
         """更新自适应采样器的反馈信息 - 仅在学习模式下执行，支持组合频率"""
@@ -694,6 +1060,58 @@ class VLLMGPUAutoscaler:
                     # 获取当前状态
                     features, available_frequencies, metrics = self._get_current_state()
                     
+                    # Baseline收集：只有在有任务时才开始基线收集
+                    current_round = getattr(self.model, 'total_rounds', 0) or 0
+                    baseline_target = self.reward_calculator.baseline_target_count
+                    if not self.reward_calculator.baseline_collected and current_round < baseline_target:
+                        # 检查是否有任务 - 只有在有任务时才进行基线收集
+                        running_requests = metrics.get('vllm:num_requests_running', 0)
+                        has_queue = metrics.get('vllm:num_requests_waiting', 0) > 0
+                        
+                        if running_requests == 0 and not has_queue:
+                            # 没有任务，等待任务开始
+                            self.logger.info("⏳ 等待任务开始以进行基线收集...")
+                            self.logger.info(f"   当前状态: 运行任务={running_requests}, 等待队列={has_queue}")
+                            self.logger.info("   说明: 系统将等待检测到任务后才开始基线EDP收集")
+                            time.sleep(2)  # 等待任务到来
+                            continue
+                        
+                        measurement_num = len(self.reward_calculator.baseline_measurements) + 1
+                        self.logger.info(f"🎯 检测到任务，开始基线EDP收集轮次 {measurement_num}/{baseline_target}...")
+                        self.logger.info(f"   当前状态: 运行任务={running_requests}, 等待队列={has_queue}")
+                        # 基线收集使用安全的默认频率，不尝试改变频率
+                        default_freq = self.gpu_controller.current_freq
+                        self.logger.info(f"🎯 基线收集使用当前频率 {default_freq}MHz（不改变频率）")
+                        
+                        # 直接收集指标而不设置频率
+                        reward, post_metrics, edp_value = self._collect_baseline_metrics()
+                        
+                        # 只有在收集到有效指标时才更新模型
+                        if post_metrics and reward != 0.0:
+                            # 更新模型以增加轮次计数
+                            self.model.update(features, default_freq, reward, edp_value)
+                            
+                            # 记录baseline收集
+                            current_round = self.model.total_rounds
+                            if self.reward_calculator.baseline_collected:
+                                self.logger.info(f"✅ Baseline EDP收集全部完成 (轮次: {current_round}, 频率: {default_freq}MHz)")
+                            else:
+                                self.logger.info(f"🔄 Baseline EDP测量进行中 {measurement_num}/{baseline_target} (轮次: {current_round})")
+                            
+                            # 记录详细信息
+                            self._log_round_details(current_round, features, default_freq, 
+                                                  reward, edp_value, metrics, post_metrics)
+                            self._record_experiment_data(current_round, features, default_freq, 
+                                                       reward, edp_value, metrics, post_metrics)
+                        else:
+                            # 没有收集到有效指标，不增加轮次计数
+                            self.logger.info("⏸️ 基线收集期间无任务，暂停此轮收集")
+                            time.sleep(1.0)  # 短暂等待后重试
+                        
+                        # 继续下一轮
+                        time.sleep(1.8)  # 基线收集后短暂休息
+                        continue
+                    
                     # 检查是否应该进入休息模式
                     is_idle = self._check_idle_mode(metrics)
                     
@@ -703,29 +1121,67 @@ class VLLMGPUAutoscaler:
                         time.sleep(2)  # 休息模式下等待2秒
                         continue  # 跳过学习，不增加轮次
                     
+                    # 数据收集模式：仅收集数据不调频，但收集完整的能量和EDP数据
+                    if self.data_collection_mode:
+                        # 数据收集模式下也需要双重指标收集来计算能量和EDP
+                        pre_metrics = metrics.copy()
+                        
+                        # 等待硬件稳定（与学习模式相同）
+                        time.sleep(0.3)
+                        
+                        # 收集执行后的指标
+                        post_metrics = self.metrics_collector.collect_metrics(
+                            energy_reader=self.gpu_controller.read_energy_j
+                        )
+                        
+                        # 计算delta指标
+                        for key in post_metrics:
+                            if key in pre_metrics and (key.endswith('_total') or key.endswith('_sum') or key.endswith('_count')):
+                                delta_key = key + '_delta'
+                                post_metrics[delta_key] = post_metrics[key] - pre_metrics[key]
+                        
+                        # 处理数据收集模式
+                        self._handle_data_collection_mode(features, pre_metrics, post_metrics)
+                        
+                        time.sleep(1.5)  # 保持与决策间隔相似的节奏
+                        continue
+                    
                     # 正常学习模式：做出决策
                     selected_action = self._make_decision(features, available_frequencies)
                     
                     # 执行动作并测量奖励
-                    reward, post_metrics, edp_value = self._execute_action_and_measure(selected_action)
+                    reward, post_metrics, edp_value = self._execute_action_and_measure(selected_action, is_baseline=False)
                     
-                    # 更新模型（只有在非休息模式下才更新）
-                    self.model.update(features, selected_action, reward, edp_value)
+                    # 更新模型（只有在有有效动作时才更新）
+                    if selected_action is not None:
+                        self.model.update(features, selected_action, reward, edp_value)
+                    else:
+                        self.logger.info("📊 重置模式，跳过模型更新，继续监控系统状态")
                     
-                    # 显示当前轮次
-                    current_round = getattr(self.model, 'total_rounds', 0) or 0
-                    print(f"🎯 当前决策轮次: {current_round}")
+                    # 显示当前轮次和记录数据（只有在有效动作时）
+                    if selected_action is not None:
+                        current_round = getattr(self.model, 'total_rounds', 0) or 0
+                        print(f"🎯 当前决策轮次: {current_round}")
+                        
+                        # 记录详细的每轮信息
+                        self._log_round_details(self.model.total_rounds, features, selected_action, 
+                                              reward, edp_value, metrics, post_metrics)
+                        
+                        # 记录实验数据到文件
+                        self._record_experiment_data(self.model.total_rounds, features, selected_action, 
+                                                    reward, edp_value, metrics, post_metrics)
+                    else:
+                        # 重置模式下只显示状态
+                        current_freq = self.gpu_controller._get_current_frequency()
+                        print(f"🔄 GPU重置模式运行中 (当前频率: {current_freq}MHz)")
                     
-                    # 记录详细的每轮信息
-                    self._log_round_details(self.model.total_rounds, features, selected_action, 
-                                          reward, edp_value, metrics, post_metrics)
+                    # 集成自适应采样器反馈 (仅在有有效动作时)
+                    if selected_action is not None:
+                        # 修复：传递完整的动作信息支持组合频率SLO处理
+                        self._update_adaptive_sampler(selected_action, reward, post_metrics)
                     
-                    # 集成自适应采样器反馈 (仅学习模式)
-                    # 修复：传递完整的动作信息支持组合频率SLO处理
-                    self._update_adaptive_sampler(selected_action, reward, post_metrics)
-                    
-                    # 执行智能动作修剪检查（如果启用且学习器已成熟）
-                    if hasattr(self.model, '_perform_action_pruning'):
+                    # 执行智能动作修剪检查（仅在有有效动作时）
+                    if selected_action is not None and hasattr(self.model, '_perform_action_pruning'):
                         # 记录修剪前的状态
                         pruned_before = len(getattr(self.model, 'pruned_frequencies', set()))
                         
@@ -789,6 +1245,10 @@ class VLLMGPUAutoscaler:
     def _cleanup(self):
         """清理资源"""
         self.logger.info("🧹 开始清理资源...")
+        
+        # 结束实验并保存数据
+        if hasattr(self, 'experiment_recorder'):
+            self.experiment_recorder.finalize_experiment()
         
         # 保存最终模型
         if hasattr(self, 'model'):

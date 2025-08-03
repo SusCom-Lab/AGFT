@@ -1,14 +1,13 @@
 # vLLM服务配置
 vllm:
-  prometheus_url: "http://127.0.0.1:8001/metrics"
+  prometheus_url: "http://10.100.1.5:8001/metrics"
   
 # GPU配置
 gpu:
-  device_id: 0
+  device_id: 2
   min_frequency: 210  # MHz
   frequency_step: 15   # MHz - 改为15MHz精细控制
   idle_frequency: 210  # 空闲时频率
-  force_step_list: true
   auto_step: true      # 自动发现GPU原生频点
   # max_action_count: 20 # 最大动作数限制 - 已禁用，允许无限制频率探索
   
@@ -19,12 +18,11 @@ gpu:
   
 # 控制参数
 control:
-  ttft_limit: 2.0         # 秒 - 调整为实际SLA值
-  tpot_limit: 0.25         # 秒 - 调整为实际SLA值
+  ttft_limit: 1000.0         # 秒 - 调整为实际SLA值
+  tpot_limit: 0.8         # 秒 - 调整为实际SLA值
   ignore_slo: false       # 无视SLO模式 - 为true时只最大化EDP，忽略TTFT/TPOT约束
-  # 智能控制新参数
-  long_interval: 10  # 秒 - 混合触发机制中的长周期固定心跳
-  change_detection_threshold: 0.9  # 事件驱动触发的阈值(0-1)
+  # 数据收集模式配置
+  data_collection_mode: false  # 启用数据收集模式 - 仅收集数据不调频，保持系统默认频率
   convergence_window: 100  # 判断模型收敛所需观察的历史决策次数
   convergence_p_value_threshold: 0.05  # 判断收敛的p值阈值(0-1)
   performance_degradation_threshold: 0.3  # 性能下降阈值(0-1)w
@@ -33,18 +31,16 @@ control:
   convergence_threshold: 0.6  # 前k个动作联合占比的收敛阈值
   # 自适应控制参数
   adaptive_update_interval: 10  # 自适应调整的间隔（决策轮次）
-  refinement_start_threshold: 50  # 开始细化的最小轮次阈值
+  refinement_start_threshold: 80  # 开始细化的最小轮次阈值
   # 学习器成熟度门槛
   learner_maturity_threshold: 100  # 学习器成熟度门槛（决策轮次），与收敛窗口保持一致
+  # 动作空间自适应恢复配置
+  auto_add_actual_frequency: true  # 当频率设置失败时自动添加实际使用的频率到动作空间
+  min_action_space_size: 1  # 动作空间最小保留频率数量，只有小于等于此值时才启用自适应恢复
 
 # 自适应频率采样配置
 adaptive_sampling:
   reward_threshold: 0.5    # 高奖励区域阈值（用于EDP模式下的频率细化）
-  slo_safe_ratio: 0.7      # SLO模式下安全区域动作占比
-  slo_coarse_step: 90      # SLO模式粗搜步长（MHz）
-  slo_fine_step: 15        # SLO模式细搜步长（MHz）
-  edp_initial_step: 90     # EDP模式初始步长（MHz）
-  edp_fine_step: 15        # EDP模式细搜步长（MHz）
   
 # LinUCB参数
 linucb:
@@ -53,31 +49,25 @@ linucb:
   min_alpha: 0.1         # 最小探索率
   lambda_reg: 1
   # 连续参数化LinUCB新参数
-  use_continuous: true   # 使用连续参数化
-  forgetting_factor: 0.01 # 历史遗忘因子(0为不遗忘,>0启用指数衰减) - 0.01表示每次更新保留99%的历史
-  # 收敛检测参数
-  convergence_method: "page_hinkley"  # 收敛检测方法: t_test | page_hinkley | cusum
   # 智能动作修剪参数
   enable_action_pruning: true  # 是否启用智能动作修剪
   pruning_check_interval: 20  # 修剪检查间隔（轮次）
-  pruning_threshold: 3       # 修剪阈值（历史奖励差距倍数，与奖励标准差相乘）
+  pruning_threshold: 4       # 修剪阈值（历史奖励差距倍数，与奖励标准差相乘）
   min_exploration_for_pruning: 6  # 修剪前最小探索次数
   pruning_maturity_threshold: 30  # 启用修剪的成熟度门槛 - 从50降至30，更早开始修剪
   cascade_pruning_threshold: 800  # 级联修剪阈值（MHz）：小于此频率被修剪时触发级联修剪
   
   # 极端频率即时修剪参数 (新增)
   enable_extreme_pruning: true     # 启用极端频率即时修剪
-  extreme_pruning_threshold: -1.5  # 极端差频率的奖励阈值
+  extreme_pruning_threshold: -1.2  # 极端差频率的奖励阈值
   extreme_pruning_min_samples: 3   # 判断极端频率的最小样本数  
-  extreme_pruning_max_rounds: 50   # 在前N轮内进行极端修剪
+  extreme_pruning_max_rounds: 60   # 在前N轮内进行极端修剪
   
 # 日志配置
 logging:
   console_level: INFO     # 控制台日志级别 (DEBUG, INFO, WARNING, ERROR)
   file_level: DEBUG       # 文件日志级别 (DEBUG, INFO, WARNING, ERROR)
-  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
   detailed_round_logging: true  # 是否记录每轮详细信息
-  console_simple: true    # 控制台是否使用简化输出（过滤详细信息）
 
 
 # 模型配置 - 纯Contextual LinUCB
@@ -85,13 +75,15 @@ model:
   type: "contextual_linucb"     # 固定使用Contextual LinUCB
   save_dir: "data/models"
   save_interval: 50             # 每50轮保存一次
-  keep_last_n: 3               # 保留最近3个模型文件
 
 metrics:
   # === 主要指标采集 ===
-  sampling_duration: 1.5      # 秒 - 标准采集窗口
+  sampling_duration: 0.8     # 秒 - 标准采集窗口
   sampling_interval: 0.01      # 秒 - 
   ema_alpha: 0.4              # EMA平滑系数
+  
+  # === 基线测量配置 ===
+  baseline_measurements: 10    # 基线EDP测量次数（取平均值）
   
 
 

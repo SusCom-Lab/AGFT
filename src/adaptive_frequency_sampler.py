@@ -154,16 +154,60 @@ class AdaptiveFrequencySampler:
                 logger.info(f"⚠️ 更新核心频率SLO边界: {old_boundary}MHz -> {violation_freq}MHz")
                 
                 if self.current_mode == SamplingMode.SLO_AWARE:
-                    # 立即进行紧急细化：以当前可用最大频率为上界，-300MHz为下界
-                    emergency_refined = self._emergency_slo_refinement(gpu_controller)
-                    if emergency_refined:
-                        logger.info(f"🚨 紧急SLO细化完成，避免进一步违规")
+                    # 在初期遍历阶段，仅进行级联修剪违规频率，不跳转到最高频率
+                    cascade_pruned = self._cascade_prune_violated_frequencies()
+                    if cascade_pruned:
+                        logger.info(f"✂️ 初期遍历级联修剪完成，继续探索剩余安全频率")
                         return True
                     else:
-                        # 如果紧急细化失败，回退到常规重新生成
+                        # 如果级联修剪失败，回退到常规重新生成
                         self._regenerate_slo_frequencies()
                         return True
             return False
+    
+    def _cascade_prune_violated_frequencies(self) -> bool:
+        """
+        初期遍历阶段的级联修剪：简单移除违规频率及以下频率
+        
+        核心思想：
+        - 保持初期遍历的简洁性，不跳转到高频范围
+        - 仅级联移除SLO违规边界及以下的频率
+        - 继续当前的高频到低频探索策略
+        
+        Returns:
+            bool: 是否成功进行了级联修剪
+        """
+        if not self.slo_violation_boundary:
+            logger.warning("⚠️ 未设置SLO违规边界，无法进行级联修剪")
+            return False
+        
+        # 获取当前频率列表
+        original_freqs = self.current_frequencies.copy()
+        if not original_freqs:
+            logger.warning("⚠️ 当前频率列表为空")
+            return False
+        
+        # 级联修剪：移除违规边界及以下的所有频率
+        safe_freqs = [freq for freq in original_freqs if freq > self.slo_violation_boundary]
+        
+        if not safe_freqs:
+            logger.warning(f"⚠️ 级联修剪后无安全频率（边界: >{self.slo_violation_boundary}MHz）")
+            return False
+        
+        # 统计修剪结果
+        pruned_freqs = [freq for freq in original_freqs if freq <= self.slo_violation_boundary]
+        
+        # 更新频率列表
+        self.current_frequencies = safe_freqs
+        
+        logger.info(f"✂️ 初期遍历级联修剪:")
+        logger.info(f"   📊 修剪统计: {len(original_freqs)} -> {len(safe_freqs)}个频率")
+        logger.info(f"   ⛔ 违规边界: ≤{self.slo_violation_boundary}MHz")
+        logger.info(f"   🗑️ 移除频率: {pruned_freqs}")
+        logger.info(f"   ✅ 保留频率: {safe_freqs}")
+        logger.info(f"   🎯 策略优势: 保持初期遍历简洁性，避免跳转高频重新开始")
+        
+        return True
     
     def _emergency_slo_refinement(self, gpu_controller=None) -> bool:
         """
@@ -414,10 +458,11 @@ class AdaptiveFrequencySampler:
             logger.debug(f"📊 频率过滤: {original_count} -> {len(valid_freqs)}个 "
                         f"({', '.join(filter_details)})")
         
-        # 安全检查：确保至少保留一些频率
-        if len(valid_freqs) == 0 and len(frequencies) > 0:
-            logger.warning(f"⚠️ 所有频率都被过滤，保留原始频率列表的前3个作为后备")
-            return frequencies[:3]
+        # 安全检查：如果所有频率都被过滤，返回空列表（系统将重置GPU频率）
+        if len(valid_freqs) == 0:
+            if len(frequencies) > 0:
+                logger.info(f"📊 所有频率都被过滤，系统将重置GPU频率到默认状态")
+            return []
         
         return valid_freqs
     
@@ -715,10 +760,23 @@ class AdaptiveFrequencySampler:
             logger.warning("⚠️ 无法获取任何UCB值，跳过细化")
             return False
         
-        # Step 2: 筛选高潜力候选池（UCB值 > 最大UCB * 0.85）
+        # Step 2: 筛选高潜力候选池（相对选择，支持负值）
         max_ucb = max(ucb_values.values())
-        ucb_threshold = max_ucb * 0.8
+        
+        # 如果最大UCB是正数，使用比例阈值；如果是负数，使用绝对差阈值
+        if max_ucb > 0:
+            ucb_threshold = max_ucb * 0.8  # 正数情况：保持原逻辑
+        else:
+            # 负数情况：选择与最大值差距不超过0.3的候选
+            ucb_threshold = max_ucb - 0.3
+        
         high_potential_candidates = {freq: ucb for freq, ucb in ucb_values.items() if ucb >= ucb_threshold}
+        
+        # 确保至少有一个候选（最大UCB值的频率）
+        if not high_potential_candidates:
+            best_freq = max(ucb_values.keys(), key=lambda f: ucb_values[f])
+            high_potential_candidates = {best_freq: ucb_values[best_freq]}
+            logger.info(f"⚠️ 无高潜力候选，强制选择最佳UCB频率: {best_freq}MHz (UCB={ucb_values[best_freq]:.4f})")
         
         logger.info(f"🔍 UCB筛选: 最大UCB={max_ucb:.4f}, 阈值={ucb_threshold:.4f}, "
                    f"高潜力候选={len(high_potential_candidates)}个")
@@ -798,7 +856,7 @@ class AdaptiveFrequencySampler:
             return None
         
         # 样本数量门槛：确保有足够的样本才能可靠地计算平均EDP
-        MIN_SAMPLES_FOR_EDP = 3
+        MIN_SAMPLES_FOR_EDP = 4
         
         # 收集每个候选频率的历史EDP数据
         candidate_edp_stats = {}
