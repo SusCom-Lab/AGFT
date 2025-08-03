@@ -47,13 +47,14 @@ The system consists of 8 main components working in a control loop:
 - **Python 3.8+** with required packages
 - **vLLM server** running with Prometheus metrics endpoint
 - **CUDA drivers** and nvidia-smi access
+- **sudo privileges** for GPU frequency control
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/vllm_mab.git
-cd vllm_mab
+git clone https://github.com/SusCom-Lab/AGFT.git
+cd AGFT
 
 # Install dependencies
 pip install numpy pynvml requests pyyaml matplotlib seaborn scipy
@@ -64,47 +65,168 @@ nvidia-smi
 # Test NVML Python bindings
 python -c "import pynvml; pynvml.nvmlInit(); print('✅ NVML OK')"
 
-# Verify vLLM connectivity
-curl http://localhost:8001/metrics | head -20
+# Verify vLLM connectivity (update IP/port as needed)
+curl http://10.100.1.5:8001/metrics | head -20
 ```
 
 ### Basic Usage
 
+**⚠️ Important: This application requires sudo privileges for GPU frequency control**
+
 ```bash
-# Run the autoscaler (recommended method)
-python -m src.main
+# Run the autoscaler with sudo (recommended method)
+sudo -E /path/to/python -m src.main
+
+# Example with conda environment
+sudo -E /home/ldaphome/colin/.conda/envs/vllm/bin/python -m src.main
 
 # Run with debug logging
-python -m src.main --log-level DEBUG
+sudo -E /home/ldaphome/colin/.conda/envs/vllm/bin/python -m src.main --log-level DEBUG
 
 # Run with fresh model (ignore existing models)
-python -m src.main --reset-model
+sudo -E /home/ldaphome/colin/.conda/envs/vllm/bin/python -m src.main --reset-model
 
 # Run with custom configuration
-python -m src.main --config config/custom_config.yaml
+sudo -E /home/ldaphome/colin/.conda/envs/vllm/bin/python -m src.main --config config/custom_config.yaml
 ```
 
-### Configuration
+**Note**: The `-E` flag preserves your environment variables when using sudo, ensuring the conda environment and other settings are maintained.
 
-Edit `config/config.yaml` to customize behavior:
+## ⚙️ Configuration Guide
+
+The system is configured via `config/config.yaml`. Here's a complete explanation of all parameters:
+
+### vLLM Service Configuration
 
 ```yaml
-# Essential settings
-control:
-  ignore_slo: false           # SLO-aware mode (false) vs EDP-optimal mode (true)
-  ttft_limit: 2.0            # Time-to-first-token limit (seconds)
-  tpot_limit: 0.25           # Time-per-output-token limit (seconds)
-
-gpu:
-  auto_step: true            # Auto-detect GPU frequency capabilities
-  frequency_step: 15         # Base frequency step size (MHz)
-  enable_memory_frequency_control: false  # Enable memory freq optimization
-
-linucb:
-  initial_alpha: 10.0        # Exploration parameter
-  enable_action_pruning: true # Enable smart frequency pruning
-  enable_extreme_pruning: true # Enable extreme frequency instant pruning
+vllm:
+  prometheus_url: "http://10.100.1.5:8001/metrics"  # vLLM Prometheus endpoint URL
 ```
+
+### GPU Configuration
+
+```yaml
+gpu:
+  device_id: 2                    # GPU device ID (0, 1, 2, etc.)
+  min_frequency: 210              # Minimum GPU frequency in MHz (safety limit)
+  frequency_step: 15              # Base frequency step size in MHz (15MHz for fine control)
+  idle_frequency: 210             # GPU frequency during idle periods
+  auto_step: true                 # Auto-detect GPU native frequency points
+  
+  # Memory Frequency Control (Advanced)
+  enable_memory_frequency_control: false  # Enable combined core+memory freq optimization
+  memory_auto_detect: true               # Auto-detect memory frequency support
+  memory_frequencies: []                 # Manual memory freq list (empty = auto-detect)
+```
+
+### Control Parameters
+
+```yaml
+control:
+  # Service Level Objectives (SLO)
+  ttft_limit: 1000.0              # Time-to-first-token limit in seconds
+  tpot_limit: 0.8                 # Time-per-output-token limit in seconds
+  ignore_slo: false               # If true: ignore SLO, optimize EDP only
+  
+  # Data Collection Mode
+  data_collection_mode: false     # If true: collect data only, don't adjust frequencies
+  
+  # Convergence Detection
+  convergence_window: 100         # History window for convergence analysis (decision rounds)
+  convergence_p_value_threshold: 0.05    # P-value threshold for statistical convergence
+  performance_degradation_threshold: 0.3  # Performance drop threshold (0-1)
+  convergence_top_k: 3           # Consider top-k actions for stability analysis
+  convergence_threshold: 0.6     # Top-k actions stability threshold (0-1)
+  
+  # Adaptive Control
+  adaptive_update_interval: 10    # Frequency space refinement interval (rounds)
+  refinement_start_threshold: 80  # Minimum rounds before refinement starts
+  learner_maturity_threshold: 100 # Model maturity threshold (rounds)
+  
+  # Action Space Recovery
+  auto_add_actual_frequency: true # Auto-add actual frequencies when setting fails
+  min_action_space_size: 1       # Minimum action space size for recovery
+```
+
+### Adaptive Frequency Sampling
+
+```yaml
+adaptive_sampling:
+  reward_threshold: 0.5          # High-reward zone threshold for EDP mode refinement
+```
+
+### LinUCB Algorithm Parameters
+
+```yaml
+linucb:
+  # Core Algorithm
+  initial_alpha: 10.0            # Initial exploration parameter (higher = more exploration)
+  alpha_decay_rate: 0.02         # Alpha decay rate per round
+  min_alpha: 0.1                 # Minimum alpha value (exploration floor)
+  lambda_reg: 1                  # Regularization parameter for LinUCB
+  
+  # Smart Action Pruning
+  enable_action_pruning: true    # Enable intelligent frequency pruning
+  pruning_check_interval: 20     # Check for pruning every N rounds
+  pruning_threshold: 4           # Pruning threshold (reward gap multiplier)
+  min_exploration_for_pruning: 6 # Minimum exploration before pruning eligibility
+  pruning_maturity_threshold: 30 # Model maturity required for pruning
+  cascade_pruning_threshold: 800 # Cascade pruning frequency threshold (MHz)
+  
+  # Extreme Frequency Instant Pruning
+  enable_extreme_pruning: true   # Enable extreme frequency instant removal
+  extreme_pruning_threshold: -1.2 # Reward threshold for extreme frequencies
+  extreme_pruning_min_samples: 3  # Minimum samples to judge extreme performance
+  extreme_pruning_max_rounds: 60  # Apply extreme pruning only in first N rounds
+```
+
+### Logging Configuration
+
+```yaml
+logging:
+  console_level: INFO            # Console log level (DEBUG, INFO, WARNING, ERROR)
+  file_level: DEBUG             # File log level (DEBUG, INFO, WARNING, ERROR)
+  detailed_round_logging: true  # Enable detailed per-round logging
+```
+
+### Model Configuration
+
+```yaml
+model:
+  type: "contextual_linucb"      # Algorithm type (fixed to contextual_linucb)
+  save_dir: "data/models"        # Model save directory
+  save_interval: 50              # Save model every N rounds
+```
+
+### Metrics Collection
+
+```yaml
+metrics:
+  sampling_duration: 0.8         # Standard metrics collection window (seconds)
+  sampling_interval: 0.01        # Sub-sampling interval (seconds)
+  ema_alpha: 0.4                # EMA smoothing coefficient for gauge metrics
+  baseline_measurements: 10      # Baseline EDP measurement count for averaging
+```
+
+## 🎛️ Operational Modes
+
+### SLO-Aware Mode (`ignore_slo: false`)
+- **Priority**: Maintain SLO constraints while optimizing energy
+- **Strategy**: High-to-low frequency search with safety prioritization
+- **Use Case**: Production environments with strict latency requirements
+- **Behavior**: Automatic SLO boundary detection and violation recovery
+
+### EDP-Optimal Mode (`ignore_slo: true`)
+- **Priority**: Maximum energy-delay product optimization
+- **Strategy**: Full frequency domain exploration
+- **Use Case**: Research environments and maximum efficiency scenarios
+- **Behavior**: Ignores TTFT/TPOT limits, focuses purely on energy efficiency
+
+### Data Collection Mode (`data_collection_mode: true`)
+- **Priority**: Data gathering without frequency changes
+- **Strategy**: Maintains system default frequencies
+- **Use Case**: Baseline measurement and workload analysis
+- **Behavior**: Collects metrics but doesn't adjust GPU frequencies
 
 ## 📈 Performance & Results
 
@@ -117,34 +239,6 @@ linucb:
 - **Fast convergence** typically within 100-200 decision rounds
 - **Intelligent exploration** with declining alpha decay
 - **Robust performance** across different GPU models and workloads
-
-## 🔧 Advanced Features
-
-### Dual-Mode Adaptive Sampling
-
-**SLO-Aware Mode** (`ignore_slo: false`):
-- High-to-low frequency search with safety prioritization
-- Automatic SLO boundary detection and violation recovery
-- Mixed refinement strategies based on model maturity
-
-**EDP-Optimal Mode** (`ignore_slo: true`):
-- Pure energy-delay product optimization
-- Full frequency domain exploration with reward-driven refinement
-- Ideal for research environments and maximum efficiency
-
-### Smart Action Pruning
-
-- **Historical Performance Pruning**: Removes consistently poor frequencies
-- **Adaptive Cascade Pruning**: Uses `gpu_max_freq // 2` threshold instead of fixed values
-- **Extreme Frequency Instant Pruning**: Immediately removes very poor frequencies in first 50 rounds
-- **Exploration Protection**: Ensures minimum exploration before pruning eligibility
-
-### Memory Frequency Optimization
-
-When supported by hardware:
-- **Combined optimization** of core and memory frequencies
-- **Automatic detection** of memory frequency control capabilities
-- **Graceful fallback** to core-only mode when unavailable
 
 ## 📊 Monitoring & Analysis
 
@@ -173,7 +267,7 @@ with open('data/models/model_metadata.json') as f:
 # Run comprehensive analysis
 python analysis.py
 
-# EDP-focused analysis
+# EDP-focused analysis  
 python analysis_edp_focused.py
 
 # Compare different configurations
@@ -208,6 +302,50 @@ nvidia-smi --query-gpu=name,driver_version,power.management --format=csv
 nvidia-smi -q -d SUPPORTED_CLOCKS
 ```
 
+## 🔍 Troubleshooting
+
+### Common Issues
+
+**GPU Permission Errors**:
+```bash
+# Add user to video group
+sudo usermod -a -G video $USER
+
+# Test frequency control with sudo
+sudo nvidia-smi -i 0 -lgc 1000
+
+# Verify sudo access to nvidia-smi
+sudo which nvidia-smi
+```
+
+**vLLM Connection Issues**:
+```bash
+# Verify vLLM is accessible
+curl http://10.100.1.5:8001/metrics | grep "vllm"
+
+# Check firewall/network settings
+telnet 10.100.1.5 8001
+```
+
+**Model Loading Issues**:
+```bash
+# Check model files
+ls -la data/models/contextual_linucb_model_*.pkl
+
+# Verify model integrity
+python -c "import pickle; pickle.load(open('data/models/latest_model.pkl', 'rb')); print('✅ Model OK')"
+```
+
+**Conda Environment Issues**:
+```bash
+# Verify conda environment path
+which python
+conda info --envs
+
+# Check if environment has required packages
+conda list | grep -E "(numpy|pynvml|requests|yaml)"
+```
+
 ## 📋 System Requirements
 
 ### Hardware
@@ -220,6 +358,7 @@ nvidia-smi -q -d SUPPORTED_CLOCKS
 - **NVIDIA drivers** (R470+ recommended)
 - **vLLM server** with Prometheus metrics enabled
 - **CUDA toolkit** (for optimal performance)
+- **sudo privileges** for GPU frequency control
 
 ### Python Dependencies
 ```
@@ -231,43 +370,6 @@ matplotlib>=3.3.0
 seaborn>=0.11.0
 scipy>=1.7.0
 ```
-
-## 🔍 Troubleshooting
-
-### Common Issues
-
-**GPU Permission Errors**:
-```bash
-# Add user to video group
-sudo usermod -a -G video $USER
-
-# Test frequency control
-nvidia-smi -i 0 -lgc 1000
-```
-
-**vLLM Connection Issues**:
-```bash
-# Verify vLLM is accessible
-curl http://localhost:8001/metrics | grep "vllm"
-```
-
-**Model Loading Issues**:
-```bash
-# Check model files
-ls -la data/models/contextual_linucb_model_*.pkl
-
-# Verify model integrity
-python -c "import pickle; pickle.load(open('data/models/latest_model.pkl', 'rb')); print('✅ Model OK')"
-```
-
-For detailed troubleshooting, see [CLAUDE.md](CLAUDE.md#troubleshooting).
-
-## 📖 Documentation
-
-- **[CLAUDE.md](CLAUDE.md)** - Comprehensive technical documentation
-- **[Configuration Guide](CLAUDE.md#critical-configuration-parameters)** - Detailed parameter explanations
-- **[Development Guide](CLAUDE.md#development-commands)** - Development workflows and testing
-- **[Performance Tuning](CLAUDE.md#performance-optimization)** - GPU-specific and workload-specific optimization
 
 ## 🤝 Contributing
 
@@ -283,8 +385,8 @@ We welcome contributions! Please see our contribution guidelines:
 
 ```bash
 # Clone your fork
-git clone https://github.com/your-username/vllm_mab.git
-cd vllm_mab
+git clone https://github.com/your-username/AGFT.git
+cd AGFT
 
 # Install development dependencies
 pip install -r requirements-dev.txt
@@ -330,9 +432,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/your-username/vllm_mab/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-username/vllm_mab/discussions)
-- **Documentation**: [CLAUDE.md](CLAUDE.md)
+- **Issues**: [GitHub Issues](https://github.com/SusCom-Lab/AGFT/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/SusCom-Lab/AGFT/discussions)
 
 ---
 
