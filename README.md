@@ -70,9 +70,7 @@ vllm:
 # GPU settings
 gpu:
   device_id: 0                    # GPU device ID
-  frequency_step: 15              # Frequency step size (MHz)
-  auto_step: true                 # Auto-detect native frequency steps
-  enable_memory_frequency_control: false  # Enable memory frequency optimization
+
 
 # Control mode
 control:
@@ -80,11 +78,6 @@ control:
   ttft_limit: 2.0                 # Time-to-first-token SLO limit (seconds)
   tpot_limit: 0.25                # Time-per-output-token SLO limit (seconds)
 
-# LinUCB algorithm
-linucb:
-  initial_alpha: 10.0             # Exploration parameter (higher=more exploration)
-  enable_action_pruning: true     # Enable smart frequency pruning
-  enable_extreme_pruning: true    # Remove very poor frequencies instantly
 ```
 
 ### 3. Run AGFT
