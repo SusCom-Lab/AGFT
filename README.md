@@ -42,7 +42,7 @@ conda create -n agft python=3.9 -y
 conda activate agft
 
 # Install dependencies
-pip install numpy pynvml requests pyyaml matplotlib seaborn scipy
+pip install numpy pynvml requests pyyaml
 ```
 
 ## Quick Start
@@ -53,12 +53,9 @@ Ensure your vLLM server is running with Prometheus metrics enabled:
 
 ```bash
 # Start vLLM with metrics
-python -m vllm.entrypoints.openai.api_server \
-  --model your-model \
+vllm serve your-model \
   --port 8000 \
-  --host 0.0.0.0 \
-  --disable-log-requests \
-  --metrics-port 8001
+  --disable-log-requests
 ```
 
 ### 2. Configure AGFT
@@ -233,3 +230,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 3. Commit your changes (`git commit -m 'Add feature'`)
 4. Push to the branch (`git push origin feature/name`)
 5. Open a Pull Request
+
+
