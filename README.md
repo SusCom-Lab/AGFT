@@ -47,6 +47,27 @@ pip install numpy pynvml requests pyyaml
 
 ## Quick Start
 
+### 0. Verify GPU Prerequisites
+
+Before running AGFT, verify you have NVIDIA GPU with frequency control support:
+
+```bash
+# Check NVIDIA GPU is available
+nvidia-smi
+
+# Test GPU frequency control permissions (requires sudo)
+sudo nvidia-smi -i 0 -lgc 1000  # Test setting core frequency to 1000MHz
+sudo nvidia-smi -i 0 -rgc       # Reset to default frequencies
+
+# Check supported frequency ranges
+nvidia-smi -q -d SUPPORTED_CLOCKS
+```
+
+**Expected results**:
+- `nvidia-smi` shows your NVIDIA GPU information
+- Frequency commands succeed without permission errors
+- Supported clocks show available frequency ranges
+
 ### 1. Configure vLLM Server
 
 Ensure your vLLM server is running with Prometheus metrics enabled:
@@ -223,5 +244,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 3. Commit your changes (`git commit -m 'Add feature'`)
 4. Push to the branch (`git push origin feature/name`)
 5. Open a Pull Request
-
-
