@@ -48,10 +48,10 @@ The system consists of 8 main components working in a control loop:
 - **vLLM server** running with Prometheus metrics endpoint
 - **CUDA drivers** and nvidia-smi access
 
-### Installation
+
 ### Installation (优化版)
 
-#### 1. 克隆代码库 (Clone the Repository)
+1. 克隆代码库 (Clone the Repository)
 
 首先，克隆 `AGFT` 的代码库并进入项目目录。
 
@@ -60,8 +60,6 @@ git clone [https://github.com/SusCom-Lab/AGFT](https://github.com/SusCom-Lab/AGF
 cd AGFT
 2. 创建并激活 Conda 环境 (Create and Activate Conda Environment)
 为了保持项目依赖的整洁，我们强烈建议创建一个新的 Conda 环境。这里我们创建一个名为 agft 的环境，并指定 Python 版本为 3.9 (您可以根据项目需求选择其他版本)。
-
-Bash
 
 # 创建一个名为 agft 的新环境
 conda create -n agft python=3.9 -y
@@ -79,36 +77,8 @@ pip install numpy pynvml requests pyyaml matplotlib seaborn scipy
 4. 验证环境与硬件 (Verify Environment and Hardware)
 完成安装后，执行以下命令来验证您的 GPU 是否被正确识别以及相关组件是否工作正常。
 
-Bash
 
-# 验证 GPU 是否被系统识别 (Verify GPU access)
-nvidia-smi
 
-# 测试 NVML Python 库是否能正常工作 (Test NVML Python bindings)
-python -c "import pynvml; pynvml.nvmlInit(); print('✅ NVML OK')"
-
-# 验证与 vLLM 服务的连接 (假设服务已在本地运行)
-# Verify vLLM connectivity (assuming the service is running locally)
-curl http://localhost:8001/metrics | head -20
-通过以上步骤，您不仅安装了所有必要的软件，还为该项目创建了一个独立、干净的运行环境。
-
-```bash
-# Clone the repository
-git clone https://github.com/SusCom-Lab/AGFT
-cd AGFT
-
-# Install dependencies
-pip install numpy pynvml requests pyyaml matplotlib seaborn scipy
-
-# Verify GPU access
-nvidia-smi
-
-# Test NVML Python bindings
-python -c "import pynvml; pynvml.nvmlInit(); print('✅ NVML OK')"
-
-# Verify vLLM connectivity
-curl http://localhost:8001/metrics | head -20
-```
 
 ### Basic Usage
 
