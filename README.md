@@ -52,8 +52,8 @@ The system consists of 8 main components working in a control loop:
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/vllm_mab.git
-cd vllm_mab
+git clone https://github.com/SusCom-Lab/AGFT
+cd AGFT
 
 # Install dependencies
 pip install numpy pynvml requests pyyaml matplotlib seaborn scipy
