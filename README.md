@@ -59,10 +59,10 @@ cd AGFT
 2. 创建并激活 Conda 环境 (Create and Activate Conda Environment)
 为了保持项目依赖的整洁，我们强烈建议创建一个新的 Conda 环境。这里我们创建一个名为 agft 的环境，并指定 Python 版本为 3.9 (您可以根据项目需求选择其他版本)。
 
-# 创建一个名为 agft 的新环境
+创建一个名为 agft 的新环境
 conda create -n agft python=3.9 -y
 
-# 激活该环境
+激活该环境
 conda activate agft
 重要提示: 在后续所有操作前，请确保您已经激活了 agft 环境。您会看到命令行提示符前出现 (agft) 字样。
 
