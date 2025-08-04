@@ -1,154 +1,171 @@
-# vLLM Multi-Armed Bandit GPU Autoscaler
+# AGFT: vLLM Multi-Armed Bandit GPU Autoscaler
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![GPU](https://img.shields.io/badge/GPU-NVIDIA-76B900.svg)](https://developer.nvidia.com/cuda-zone)
 [![vLLM](https://img.shields.io/badge/vLLM-Compatible-orange.svg)](https://github.com/vllm-project/vllm)
 
-An intelligent GPU frequency optimization system that uses **Contextual LinUCB Multi-Armed Bandit** algorithms to automatically adjust NVIDIA GPU clock frequencies in real-time, minimizing Energy-Delay Product (EDP) while maintaining quality of service constraints for vLLM inference servers.
+An intelligent GPU frequency optimization system that uses Contextual LinUCB Multi-Armed Bandit algorithms to automatically adjust NVIDIA GPU clock frequencies in real-time, minimizing Energy-Delay Product (EDP) while maintaining quality of service constraints for vLLM inference servers.
 
-## 🎯 Key Features
+## Overview
 
-- **🧠 Contextual LinUCB Algorithm**: Pure contextual bandit where frequencies are arms/actions and workload features serve as context
-- **⚡ Real-Time Energy Optimization**: Direct GPU power measurement with fixed 0.3s decision cycles
-- **🎛️ Adaptive Frequency Discovery**: Intelligent exploration with dual-mode sampling (SLO-aware vs EDP-optimal)
-- **✂️ Smart Action Pruning**: Advanced frequency pruning with adaptive cascade and extreme frequency instant removal
-- **🔄 Mixed Maturity-Based Refinement**: Statistical refinement for immature models, predictive refinement for mature models
-- **💾 Optional Memory Frequency Control**: Combined core and memory frequency optimization when hardware supports it
-- **📊 GPU-Classified Logging**: Automatic log organization by GPU model with detailed performance tracking
+AGFT uses a pure contextual bandit approach where:
+- **Actions**: GPU frequencies (core and/or memory frequencies)  
+- **Context**: 7-dimensional workload feature vectors (queue depth, cache usage, token rates, etc.)
+- **Reward**: Normalized Energy-Delay Product with SLO constraints
+- **Algorithm**: Contextual LinUCB with smart action pruning and adaptive frequency discovery
 
-## 🏗️ Architecture Overview
+**Key capabilities**:
+- Real-time energy optimization with 0.3s decision cycles
+- Dual-mode operation: SLO-aware vs EDP-optimal
+- Smart frequency pruning with cascade and extreme frequency removal
+- Combined core and memory frequency optimization
+- Automatic model convergence detection and exploitation
 
-The system consists of 8 main components working in a control loop:
+## Prerequisites
 
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   vLLM Server   │───▶│ Metrics Collector │───▶│ Feature Extractor│
-│ (Prometheus API)│    │  (Session Reuse)  │    │ (7D + Welford)  │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                                                         │
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   GPU Controller│◀───│  Main Controller  │◀───│ Contextual LinUCB│
-│ (Adaptive Freq) │    │  (Orchestration)  │    │ (Action Pruning) │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-         │                       │                       ▲
-         ▼                       ▼                       │
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│Adaptive Sampler │    │ Reward Calculator│───▶│     Logger      │
-│ (Dual-Mode)     │    │   (EDP-Based)    │    │ (GPU-Classified)│
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-```
+- NVIDIA GPU with frequency control support (`nvidia-smi -lgc` capability)
+- Python 3.8+ with required packages
+- vLLM server running with Prometheus metrics endpoint (`/metrics`)
+- CUDA drivers and nvidia-smi access
+- Sudo privileges for GPU frequency control
 
-## 🚀 Quick Start
-
-### Prerequisites
-
-- **NVIDIA GPU** with frequency control support
-- **Python 3.8+** with required packages
-- **vLLM server** running with Prometheus metrics endpoint
-- **CUDA drivers** and nvidia-smi access
-
-### Installation
+## Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/vllm_mab.git
-cd vllm_mab
+# Clone repository
+git clone https://github.com/SusCom-Lab/AGFT
+cd AGFT
+
+# Create conda environment
+conda create -n agft python=3.9 -y
+conda activate agft
 
 # Install dependencies
 pip install numpy pynvml requests pyyaml matplotlib seaborn scipy
-
-# Verify GPU access
-nvidia-smi
-
-# Test NVML Python bindings
-python -c "import pynvml; pynvml.nvmlInit(); print('✅ NVML OK')"
-
-# Verify vLLM connectivity
-curl http://localhost:8001/metrics | head -20
 ```
 
-### Basic Usage
+## Quick Start
+
+### 1. Configure vLLM Server
+
+Ensure your vLLM server is running with Prometheus metrics enabled:
 
 ```bash
-# Run the autoscaler (recommended method)
-python -m src.main
-
-# Run with debug logging
-python -m src.main --log-level DEBUG
-
-# Run with fresh model (ignore existing models)
-python -m src.main --reset-model
-
-# Run with custom configuration
-python -m src.main --config config/custom_config.yaml
+# Start vLLM with metrics
+python -m vllm.entrypoints.openai.api_server \
+  --model your-model \
+  --port 8000 \
+  --host 0.0.0.0 \
+  --disable-log-requests \
+  --metrics-port 8001
 ```
 
-### Configuration
+### 2. Configure AGFT
 
-Edit `config/config.yaml` to customize behavior:
+Edit `config/config.yaml`:
 
 ```yaml
-# Essential settings
-control:
-  ignore_slo: false           # SLO-aware mode (false) vs EDP-optimal mode (true)
-  ttft_limit: 2.0            # Time-to-first-token limit (seconds)
-  tpot_limit: 0.25           # Time-per-output-token limit (seconds)
+# vLLM connection
+vllm:
+  prometheus_url: "http://127.0.0.1:8001/metrics"
 
+# GPU settings
 gpu:
-  auto_step: true            # Auto-detect GPU frequency capabilities
-  frequency_step: 15         # Base frequency step size (MHz)
-  enable_memory_frequency_control: false  # Enable memory freq optimization
+  device_id: 0                    # GPU device ID
+  frequency_step: 15              # Frequency step size (MHz)
+  auto_step: true                 # Auto-detect native frequency steps
+  enable_memory_frequency_control: false  # Enable memory frequency optimization
 
+# Control mode
+control:
+  ignore_slo: false               # false=SLO-aware mode, true=EDP-optimal mode
+  ttft_limit: 2.0                 # Time-to-first-token SLO limit (seconds)
+  tpot_limit: 0.25                # Time-per-output-token SLO limit (seconds)
+
+# LinUCB algorithm
 linucb:
-  initial_alpha: 10.0        # Exploration parameter
-  enable_action_pruning: true # Enable smart frequency pruning
-  enable_extreme_pruning: true # Enable extreme frequency instant pruning
+  initial_alpha: 10.0             # Exploration parameter (higher=more exploration)
+  enable_action_pruning: true     # Enable smart frequency pruning
+  enable_extreme_pruning: true    # Remove very poor frequencies instantly
 ```
 
-## 📈 Performance & Results
+### 3. Run AGFT
 
-### Energy Efficiency Gains
-- **15-30% EDP reduction** compared to fixed frequency operation
-- **Automatic adaptation** to varying workload patterns
-- **SLO compliance** maintained during optimization
+```bash
+# Basic run (requires sudo for GPU frequency control)
+sudo -E /path/to/your/conda/envs/agft/bin/python -m src.main --config config/config.yaml
 
-### Adaptive Learning
-- **Fast convergence** typically within 100-200 decision rounds
-- **Intelligent exploration** with declining alpha decay
-- **Robust performance** across different GPU models and workloads
+# Example with specific conda path
+sudo -E /home/ldaphome/colin/.conda/envs/vllm/bin/python -m src.main --config config/config.yaml
 
-## 🔧 Advanced Features
+# With debug logging
+sudo -E /path/to/your/conda/envs/agft/bin/python -m src.main --log-level DEBUG
 
-### Dual-Mode Adaptive Sampling
+# Reset model and start fresh
+sudo -E /path/to/your/conda/envs/agft/bin/python -m src.main --reset-model
+```
+
+**Note**: Replace `/path/to/your/conda/envs/agft/bin/python` with your actual conda environment Python path. You can find it with `conda info --envs` or `which python` (while in the activated environment).
+
+## Configuration Details
+
+### Core Control Parameters
+
+| Parameter | Description | Default | Options |
+|-----------|-------------|---------|---------|
+| `control.ignore_slo` | Operating mode | `false` | `false` (SLO-aware), `true` (EDP-optimal) |
+| `control.ttft_limit` | Time-to-first-token SLO limit | `2.0` | Seconds |
+| `control.tpot_limit` | Time-per-output-token SLO limit | `0.25` | Seconds |
+| `control.data_collection_mode` | Data collection only (no frequency changes) | `false` | `true`/`false` |
+
+### GPU Control
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `gpu.device_id` | Target GPU device ID | `0` |
+| `gpu.frequency_step` | Base frequency step size | `15` MHz |
+| `gpu.auto_step` | Auto-detect native GPU frequency steps | `true` |
+| `gpu.enable_memory_frequency_control` | Enable memory frequency optimization | `false` |
+
+### LinUCB Algorithm
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `linucb.initial_alpha` | Exploration parameter (higher = more exploration) | `10.0` |
+| `linucb.enable_action_pruning` | Smart frequency pruning | `true` |
+| `linucb.enable_extreme_pruning` | Instant removal of very poor frequencies | `true` |
+| `linucb.pruning_threshold` | Pruning threshold (reward gap multiplier) | `4.0` |
+
+## Performance
+
+- **Energy savings**: 15-30% EDP reduction vs fixed frequency
+- **Convergence**: Typically 100-200 decision rounds  
+- **SLO compliance**: Maintained during optimization (SLO-aware mode)
+- **Decision latency**: Fixed 0.3s cycles for real-time operation
+
+## Advanced Features
+
+### Operating Modes
 
 **SLO-Aware Mode** (`ignore_slo: false`):
-- High-to-low frequency search with safety prioritization
-- Automatic SLO boundary detection and violation recovery
-- Mixed refinement strategies based on model maturity
+- Maintains SLO constraints while optimizing energy
+- Safe frequency exploration with violation recovery
+- Recommended for production environments
 
 **EDP-Optimal Mode** (`ignore_slo: true`):
 - Pure energy-delay product optimization
-- Full frequency domain exploration with reward-driven refinement
-- Ideal for research environments and maximum efficiency
+- Full frequency domain exploration
+- Maximum efficiency for research environments
 
-### Smart Action Pruning
+### Smart Frequency Management
 
-- **Historical Performance Pruning**: Removes consistently poor frequencies
-- **Adaptive Cascade Pruning**: Uses `gpu_max_freq // 2` threshold instead of fixed values
-- **Extreme Frequency Instant Pruning**: Immediately removes very poor frequencies in first 50 rounds
-- **Exploration Protection**: Ensures minimum exploration before pruning eligibility
+- **Action Pruning**: Removes consistently poor frequencies based on historical performance
+- **Extreme Pruning**: Instantly removes very poor frequencies in early rounds
+- **Cascade Pruning**: Hardware-aware frequency removal using adaptive thresholds
+- **Memory Optimization**: Combined core and memory frequency tuning (when supported)
 
-### Memory Frequency Optimization
-
-When supported by hardware:
-- **Combined optimization** of core and memory frequencies
-- **Automatic detection** of memory frequency control capabilities
-- **Graceful fallback** to core-only mode when unavailable
-
-## 📊 Monitoring & Analysis
-
-### Real-Time Monitoring
+## Monitoring
 
 ```bash
 # Monitor GPU frequency changes
@@ -167,134 +184,54 @@ with open('data/models/model_metadata.json') as f:
 "
 ```
 
-
-## 🛠️ Development & Testing
-
-### Component Testing
+## Testing
 
 ```bash
 # Test individual components
-python -m src.gpu_controller          # GPU control and adaptive sampling
-python -m src.metrics_collector       # vLLM metrics collection
-python -m src.feature_extractor       # Contextual feature extraction
+python -m src.gpu_controller
+python -m src.metrics_collector
+python -m src.feature_extractor
 
-# Test LinUCB algorithm
-python -c "from src.contextual_bandit import ContextualLinUCB; m=ContextualLinUCB(7); print('✅ Contextual LinUCB OK')"
-
-# Test memory frequency support
-python -c "from src.gpu_controller import GPUController; g=GPUController(enable_memory_frequency_control=True); print('Memory support:', g.memory_frequency_supported)"
-```
-
-### Configuration Validation
-
-```bash
-# Validate configuration syntax
+# Validate configuration
 python -c "import yaml; yaml.safe_load(open('config/config.yaml')); print('✅ Config valid')"
 
-# Test GPU capabilities
+# Check GPU capabilities
 nvidia-smi --query-gpu=name,driver_version,power.management --format=csv
 nvidia-smi -q -d SUPPORTED_CLOCKS
 ```
 
-## 📋 System Requirements
-
-### Hardware
-- **NVIDIA GPU** with power management support
-- **Frequency control capabilities** via nvidia-smi
-- **NVML API access** for energy measurement
-
-### Software
-- **Python 3.8+**
-- **NVIDIA drivers** (R470+ recommended)
-- **vLLM server** with Prometheus metrics enabled
-- **CUDA toolkit** (for optimal performance)
-
-### Python Dependencies
-```
-numpy>=1.21.0
-pynvml>=11.0.0
-requests>=2.25.0
-pyyaml>=5.4.0
-matplotlib>=3.3.0
-seaborn>=0.11.0
-scipy>=1.7.0
-```
-
-## 🔍 Troubleshooting
-
-### Common Issues
+## Troubleshooting
 
 **GPU Permission Errors**:
 ```bash
-# Add user to video group
+# Add user to video group and test frequency control
 sudo usermod -a -G video $USER
-
-# Test frequency control
 nvidia-smi -i 0 -lgc 1000
 ```
 
 **vLLM Connection Issues**:
 ```bash
-# Verify vLLM is accessible
+# Verify vLLM metrics endpoint is accessible
 curl http://localhost:8001/metrics | grep "vllm"
 ```
 
 **Model Loading Issues**:
 ```bash
-# Check model files
-ls -la data/models/contextual_linucb_model_*.pkl
-
-# Verify model integrity
-python -c "import pickle; pickle.load(open('data/models/latest_model.pkl', 'rb')); print('✅ Model OK')"
+# Reset corrupted models
+rm data/models/*.pkl
+sudo -E $(which python) -m src.main --reset-model
 ```
 
-For detailed troubleshooting, see [CLAUDE.md](CLAUDE.md#troubleshooting).
-
-## 📖 Documentation
-
-- **[CLAUDE.md](CLAUDE.md)** - Comprehensive technical documentation
-- **[Configuration Guide](CLAUDE.md#critical-configuration-parameters)** - Detailed parameter explanations
-- **[Development Guide](CLAUDE.md#development-commands)** - Development workflows and testing
-- **[Performance Tuning](CLAUDE.md#performance-optimization)** - GPU-specific and workload-specific optimization
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our contribution guidelines:
-
-1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
-4. **Push** to the branch (`git push origin feature/amazing-feature`)
-5. **Open** a Pull Request
-
-## 🏆 Key Innovations
-
-1. **Pure Contextual Bandit Design**: Frequencies as actions, workload features as context
-2. **Adaptive Cascade Pruning**: Hardware-aware frequency pruning using `gpu_max_freq // 2`
-3. **Mixed Maturity-Based Refinement**: Different strategies for immature vs mature models
-4. **Load-Aware Frequency Recommendation**: Percentile-based load classification
-5. **Emergency SLO Recovery**: Immediate frequency adjustment for SLO violations
-6. **Online Feature Normalization**: Welford's algorithm for stable feature standardization
-
-## 📜 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## Contributing
 
-- **vLLM Team** for the excellent inference framework
-- **NVIDIA** for NVML API and GPU management tools
-- **Multi-Armed Bandit Research Community** for theoretical foundations
-- **Open Source Contributors** for various dependencies and tools
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/name`)
+3. Commit your changes (`git commit -m 'Add feature'`)
+4. Push to the branch (`git push origin feature/name`)
+5. Open a Pull Request
 
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/your-username/vllm_mab/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-username/vllm_mab/discussions)
-- **Documentation**: [CLAUDE.md](CLAUDE.md)
-
----
-
-**⭐ Star this repo if you find it useful!**
-
-*Built with ❤️ for the energy-efficient AI community*
+For detailed technical documentation, see [CLAUDE.md](CLAUDE.md).
