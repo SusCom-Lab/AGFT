@@ -49,31 +49,44 @@ The system consists of 8 main components working in a control loop:
 - **CUDA drivers** and nvidia-smi access
 
 
-### Installation (优化版)
+# Installation
 
-1. 克隆代码库 (Clone the Repository)
+## 1. Clone the Repository (克隆代码库)
 
-首先，克隆 `AGFT` 的代码库并进入项目目录。
+First, clone the `AGFT` repository and navigate to the project directory.
+
+```bash
 git clone https://github.com/SusCom-Lab/AGFT
 cd AGFT
-2. 创建并激活 Conda 环境 (Create and Activate Conda Environment)
-为了保持项目依赖的整洁，我们强烈建议创建一个新的 Conda 环境。这里我们创建一个名为 agft 的环境，并指定 Python 版本为 3.9 (您可以根据项目需求选择其他版本)。
+```
 
-创建一个名为 agft 的新环境
+## 2. Create and Activate Conda Environment (创建并激活 Conda 环境)
+
+To maintain clean project dependencies, we strongly recommend creating a new Conda environment. Here we create an environment named `agft` with Python 3.9 (you can choose other versions based on project requirements).
+
+```bash
+# Create a new environment named agft
 conda create -n agft python=3.9 -y
 
-激活该环境
+# Activate the environment
 conda activate agft
-重要提示: 在后续所有操作前，请确保您已经激活了 agft 环境。您会看到命令行提示符前出现 (agft) 字样。
+```
 
-3. 安装依赖项 (Install Dependencies)
-在激活的 Conda 环境中，使用 pip 来安装所有必需的 Python 包。
+> **Important Note**: Please ensure you have activated the `agft` environment before all subsequent operations. You should see `(agft)` appearing before your command line prompt.
 
+## 3. Install Dependencies (安装依赖项)
+
+In the activated Conda environment, use pip to install all required Python packages.
+
+```bash
 pip install numpy pynvml requests pyyaml matplotlib seaborn scipy
-您也可以考虑将这些依赖项整理到一个 requirements.txt 文件中，然后通过 pip install -r requirements.txt 来安装，这样更便于管理。
+```
 
-4. 验证环境与硬件 (Verify Environment and Hardware)
-完成安装后，执行以下命令来验证您的 GPU 是否被正确识别以及相关组件是否工作正常。
+You can also consider organizing these dependencies into a `requirements.txt` file and install them via `pip install -r requirements.txt` for better management.
+
+## 4. Verify Environment and Hardware (验证环境与硬件)
+
+After installation, run the following commands to verify that your GPU is properly recognized and related components are working correctly.
 
 
 
