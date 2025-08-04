@@ -72,16 +72,19 @@ curl http://localhost:8001/metrics | head -20
 
 ```bash
 # Run the autoscaler (recommended method)
-python -m src.main
+sudo -E [your conda path] -m src.main
 
 # Run with debug logging
-python -m src.main --log-level DEBUG
+sudo -E [your conda path] -m src.main --log-level DEBUG
 
 # Run with fresh model (ignore existing models)
-python -m src.main --reset-model
+sudo -E [your conda path] -m src.main --reset-model
 
 # Run with custom configuration
-python -m src.main --config config/custom_config.yaml
+sudo -E [your conda path] -m src.main --config config/config.yaml
+
+# example
+sudo -E /home/ldaphome/colin/.conda/envs/vllm/bin/python -m src.main --config config/config.yaml
 ```
 
 ### Configuration
