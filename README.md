@@ -54,9 +54,7 @@ The system consists of 8 main components working in a control loop:
 1. 克隆代码库 (Clone the Repository)
 
 首先，克隆 `AGFT` 的代码库并进入项目目录。
-
-```bash
-git clone [https://github.com/SusCom-Lab/AGFT](https://github.com/SusCom-Lab/AGFT)
+git clone https://github.com/SusCom-Lab/AGFT
 cd AGFT
 2. 创建并激活 Conda 环境 (Create and Activate Conda Environment)
 为了保持项目依赖的整洁，我们强烈建议创建一个新的 Conda 环境。这里我们创建一个名为 agft 的环境，并指定 Python 版本为 3.9 (您可以根据项目需求选择其他版本)。
