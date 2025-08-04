@@ -49,6 +49,48 @@ The system consists of 8 main components working in a control loop:
 - **CUDA drivers** and nvidia-smi access
 
 ### Installation
+### Installation (优化版)
+
+#### 1. 克隆代码库 (Clone the Repository)
+
+首先，克隆 `AGFT` 的代码库并进入项目目录。
+
+```bash
+git clone [https://github.com/SusCom-Lab/AGFT](https://github.com/SusCom-Lab/AGFT)
+cd AGFT
+2. 创建并激活 Conda 环境 (Create and Activate Conda Environment)
+为了保持项目依赖的整洁，我们强烈建议创建一个新的 Conda 环境。这里我们创建一个名为 agft 的环境，并指定 Python 版本为 3.9 (您可以根据项目需求选择其他版本)。
+
+Bash
+
+# 创建一个名为 agft 的新环境
+conda create -n agft python=3.9 -y
+
+# 激活该环境
+conda activate agft
+重要提示: 在后续所有操作前，请确保您已经激活了 agft 环境。您会看到命令行提示符前出现 (agft) 字样。
+
+3. 安装依赖项 (Install Dependencies)
+在激活的 Conda 环境中，使用 pip 来安装所有必需的 Python 包。
+
+pip install numpy pynvml requests pyyaml matplotlib seaborn scipy
+您也可以考虑将这些依赖项整理到一个 requirements.txt 文件中，然后通过 pip install -r requirements.txt 来安装，这样更便于管理。
+
+4. 验证环境与硬件 (Verify Environment and Hardware)
+完成安装后，执行以下命令来验证您的 GPU 是否被正确识别以及相关组件是否工作正常。
+
+Bash
+
+# 验证 GPU 是否被系统识别 (Verify GPU access)
+nvidia-smi
+
+# 测试 NVML Python 库是否能正常工作 (Test NVML Python bindings)
+python -c "import pynvml; pynvml.nvmlInit(); print('✅ NVML OK')"
+
+# 验证与 vLLM 服务的连接 (假设服务已在本地运行)
+# Verify vLLM connectivity (assuming the service is running locally)
+curl http://localhost:8001/metrics | head -20
+通过以上步骤，您不仅安装了所有必要的软件，还为该项目创建了一个独立、干净的运行环境。
 
 ```bash
 # Clone the repository
