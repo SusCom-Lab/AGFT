@@ -48,66 +48,40 @@ The system consists of 8 main components working in a control loop:
 - **vLLM server** running with Prometheus metrics endpoint
 - **CUDA drivers** and nvidia-smi access
 
-
-# Installation
-
-## 1. Clone the Repository (克隆代码库)
-
-First, clone the `AGFT` repository and navigate to the project directory.
+### Installation
 
 ```bash
-git clone https://github.com/SusCom-Lab/AGFT
-cd AGFT
-```
+# Clone the repository
+git clone https://github.com/your-username/vllm_mab.git
+cd vllm_mab
 
-## 2. Create and Activate Conda Environment (创建并激活 Conda 环境)
-
-To maintain clean project dependencies, we strongly recommend creating a new Conda environment. Here we create an environment named `agft` with Python 3.9 (you can choose other versions based on project requirements).
-
-```bash
-# Create a new environment named agft
-conda create -n agft python=3.9 -y
-
-# Activate the environment
-conda activate agft
-```
-
-> **Important Note**: Please ensure you have activated the `agft` environment before all subsequent operations. You should see `(agft)` appearing before your command line prompt.
-
-## 3. Install Dependencies (安装依赖项)
-
-In the activated Conda environment, use pip to install all required Python packages.
-
-```bash
+# Install dependencies
 pip install numpy pynvml requests pyyaml matplotlib seaborn scipy
+
+# Verify GPU access
+nvidia-smi
+
+# Test NVML Python bindings
+python -c "import pynvml; pynvml.nvmlInit(); print('✅ NVML OK')"
+
+# Verify vLLM connectivity
+curl http://localhost:8001/metrics | head -20
 ```
-
-You can also consider organizing these dependencies into a `requirements.txt` file and install them via `pip install -r requirements.txt` for better management.
-
-## 4. Verify Environment and Hardware (验证环境与硬件)
-
-After installation, run the following commands to verify that your GPU is properly recognized and related components are working correctly.
-
-
-
 
 ### Basic Usage
 
 ```bash
 # Run the autoscaler (recommended method)
-sudo -E [your conda path] -m src.main
+python -m src.main
 
 # Run with debug logging
-sudo -E [your conda path] -m src.main --log-level DEBUG
+python -m src.main --log-level DEBUG
 
 # Run with fresh model (ignore existing models)
-sudo -E [your conda path] -m src.main --reset-model
+python -m src.main --reset-model
 
 # Run with custom configuration
-sudo -E [your conda path] -m src.main --config config/config.yaml
-
-# example
-sudo -E /home/ldaphome/colin/.conda/envs/vllm/bin/python -m src.main --config config/config.yaml
+python -m src.main --config config/custom_config.yaml
 ```
 
 ### Configuration
@@ -292,25 +266,6 @@ We welcome contributions! Please see our contribution guidelines:
 3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
 4. **Push** to the branch (`git push origin feature/amazing-feature`)
 5. **Open** a Pull Request
-
-### Development Setup
-
-```bash
-# Clone your fork
-git clone https://github.com/your-username/vllm_mab.git
-cd vllm_mab
-
-# Install development dependencies
-pip install -r requirements-dev.txt
-
-# Run tests
-python -m pytest tests/
-
-# Run linting
-flake8 src/
-black src/
-```
-
 
 ## 🏆 Key Innovations
 
